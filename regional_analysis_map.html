@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html>
+<head>
+    
+    <meta http-equiv="content-type" content="text/html; charset=UTF-8" />
+    <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.3/dist/leaflet.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.2/dist/css/bootstrap.min.css"/>
+    <link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.0/css/bootstrap-glyphicons.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.2.0/css/all.min.css"/>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/Leaflet.awesome-markers/2.0.2/leaflet.awesome-markers.css"/>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/python-visualization/folium/folium/templates/leaflet.awesome.rotate.min.css"/>
+    
+            <meta name="viewport" content="width=device-width,
+                initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+            <style>
+                #map_b01498309b7d041ec9e5462f194e9f95 {
+                    position: relative;
+                    width: 100.0%;
+                    height: 100.0%;
+                    left: 0.0%;
+                    top: 0.0%;
+                }
+                .leaflet-container { font-size: 1rem; }
+            </style>
+
+            <style>html, body {
+                width: 100%;
+                height: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            </style>
+
+            <style>#map {
+                position:absolute;
+                top:0;
+                bottom:0;
+                right:0;
+                left:0;
+                }
+            </style>
+
+            <script>
+                L_NO_TOUCH = false;
+                L_DISABLE_3D = false;
+            </script>
+
+        
+</head>
+<body>
+    
+    
+            <div class="folium-map" id="map_b01498309b7d041ec9e5462f194e9f95" ></div>
+        
+</body>
+<script>
+    
+    
+            var map_b01498309b7d041ec9e5462f194e9f95 = L.map(
+                "map_b01498309b7d041ec9e5462f194e9f95",
+                {
+                    center: [36.0, 138.0],
+                    crs: L.CRS.EPSG3857,
+                    ...{
+  "zoom": 5,
+  "zoomControl": true,
+  "preferCanvas": false,
+}
+
+                }
+            );
+
+            
+
+        
+    
+            var tile_layer_99c871c8e935c87997253245520ddf3f = L.tileLayer(
+                "https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 19,
+  "maxNativeZoom": 19,
+  "noWrap": false,
+  "attribution": "\u0026copy; \u003ca href=\"https://www.openstreetmap.org/copyright\"\u003eOpenStreetMap\u003c/a\u003e contributors",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 1,
+}
+
+            );
+        
+    
+            tile_layer_99c871c8e935c87997253245520ddf3f.addTo(map_b01498309b7d041ec9e5462f194e9f95);
+        
+    
+            var tile_layer_0a108e36623d5109adeed73320368588 = L.tileLayer(
+                "https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 18,
+  "maxNativeZoom": 18,
+  "noWrap": false,
+  "attribution": "\u56fd\u571f\u5730\u7406\u9662 \u91cd\u306d\u308b\u30cf\u30b6\u30fc\u30c9\u30de\u30c3\u30d7",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 0.7,
+  "fmt": "image/png",
+}
+
+            );
+        
+    
+            tile_layer_0a108e36623d5109adeed73320368588.addTo(map_b01498309b7d041ec9e5462f194e9f95);
+        
+    
+            var tile_layer_cdec7bf5f9867ef037a3ee489a8b9fb4 = L.tileLayer(
+                "https://disaportaldata.gsi.go.jp/raster/05_dosekiryukeikaikuiki/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 18,
+  "maxNativeZoom": 18,
+  "noWrap": false,
+  "attribution": "\u56fd\u571f\u5730\u7406\u9662 \u91cd\u306d\u308b\u30cf\u30b6\u30fc\u30c9\u30de\u30c3\u30d7",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 0.7,
+  "fmt": "image/png",
+}
+
+            );
+        
+    
+            tile_layer_cdec7bf5f9867ef037a3ee489a8b9fb4.addTo(map_b01498309b7d041ec9e5462f194e9f95);
+        
+    
+            var tile_layer_3d3127dd0f8eaa8a8a9d928a71d2e734 = L.tileLayer(
+                "https://disaportaldata.gsi.go.jp/raster/04_tsunami_newlegend_data/{z}/{x}/{y}.png",
+                {
+  "minZoom": 0,
+  "maxZoom": 18,
+  "maxNativeZoom": 18,
+  "noWrap": false,
+  "attribution": "\u56fd\u571f\u5730\u7406\u9662 \u91cd\u306d\u308b\u30cf\u30b6\u30fc\u30c9\u30de\u30c3\u30d7",
+  "subdomains": "abc",
+  "detectRetina": false,
+  "tms": false,
+  "opacity": 0.7,
+  "fmt": "image/png",
+}
+
+            );
+        
+    
+            tile_layer_3d3127dd0f8eaa8a8a9d928a71d2e734.addTo(map_b01498309b7d041ec9e5462f194e9f95);
+        
+    
+            var marker_056395e7bae756400236ddbfa6aec1fc = L.marker(
+                [35.8289993, 139.8726811],
+                {
+}
+            ).addTo(map_b01498309b7d041ec9e5462f194e9f95);
+        
+    
+            var icon_ac6fcf4fdb621de4ee6c14393487dfca = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "blue",
+  "iconColor": "white",
+  "icon": "info-sign",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_18271cc76f14cb9b1ef38babe04fbed5 = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_7f1e9eda00224e77b03a3a498d33e904 = $(`<div id="html_7f1e9eda00224e77b03a3a498d33e904" style="width: 100.0%; height: 100.0%;"><h4>埼玉県三郷市</h4><pre>直近の平均地価: 270,915円/㎡ 直近の総人口: 142,145人</pre></div>`)[0];
+                popup_18271cc76f14cb9b1ef38babe04fbed5.setContent(html_7f1e9eda00224e77b03a3a498d33e904);
+            
+        
+
+        marker_056395e7bae756400236ddbfa6aec1fc.bindPopup(popup_18271cc76f14cb9b1ef38babe04fbed5)
+        ;
+
+        
+    
+    
+            marker_056395e7bae756400236ddbfa6aec1fc.bindTooltip(
+                `<div>
+                     埼玉県三郷市
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_056395e7bae756400236ddbfa6aec1fc.setIcon(icon_ac6fcf4fdb621de4ee6c14393487dfca);
+            
+    
+            var marker_b0685ee89fad829f36cfc0ba9fdb13c3 = L.marker(
+                [38.7272187, 139.8266292],
+                {
+}
+            ).addTo(map_b01498309b7d041ec9e5462f194e9f95);
+        
+    
+            var icon_6683d3cf9b50797c7bc9018d4aada60b = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "blue",
+  "iconColor": "white",
+  "icon": "info-sign",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_125a0e7dbb4e8a5f1e06a0c56c6b61ff = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_eb48a1f7b8e7fbb34f6c6d3030dd34d2 = $(`<div id="html_eb48a1f7b8e7fbb34f6c6d3030dd34d2" style="width: 100.0%; height: 100.0%;"><h4>山形県鶴岡市</h4><pre>直近の平均地価: 43,409円/㎡ 直近の総人口: 122,347人</pre></div>`)[0];
+                popup_125a0e7dbb4e8a5f1e06a0c56c6b61ff.setContent(html_eb48a1f7b8e7fbb34f6c6d3030dd34d2);
+            
+        
+
+        marker_b0685ee89fad829f36cfc0ba9fdb13c3.bindPopup(popup_125a0e7dbb4e8a5f1e06a0c56c6b61ff)
+        ;
+
+        
+    
+    
+            marker_b0685ee89fad829f36cfc0ba9fdb13c3.bindTooltip(
+                `<div>
+                     山形県鶴岡市
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_b0685ee89fad829f36cfc0ba9fdb13c3.setIcon(icon_6683d3cf9b50797c7bc9018d4aada60b);
+            
+    
+            var marker_9afd0ab782e0c9d17072a8796b407ca4 = L.marker(
+                [40.2710819, 141.304674],
+                {
+}
+            ).addTo(map_b01498309b7d041ec9e5462f194e9f95);
+        
+    
+            var icon_e069b27e9613137092a33a97bdbfd70a = L.AwesomeMarkers.icon(
+                {
+  "markerColor": "blue",
+  "iconColor": "white",
+  "icon": "info-sign",
+  "prefix": "glyphicon",
+  "extraClasses": "fa-rotate-0",
+}
+            );
+        
+    
+        var popup_426e8aa02028f84b34ddb8d6d31c3794 = L.popup({
+  "maxWidth": 300,
+});
+
+        
+            
+                var html_c8ce28102932515782c48859057cd636 = $(`<div id="html_c8ce28102932515782c48859057cd636" style="width: 100.0%; height: 100.0%;"><h4>岩手県二戸市</h4><pre>直近の平均地価: 6,824円/㎡ 直近の総人口: 25,513人</pre></div>`)[0];
+                popup_426e8aa02028f84b34ddb8d6d31c3794.setContent(html_c8ce28102932515782c48859057cd636);
+            
+        
+
+        marker_9afd0ab782e0c9d17072a8796b407ca4.bindPopup(popup_426e8aa02028f84b34ddb8d6d31c3794)
+        ;
+
+        
+    
+    
+            marker_9afd0ab782e0c9d17072a8796b407ca4.bindTooltip(
+                `<div>
+                     岩手県二戸市
+                 </div>`,
+                {
+  "sticky": true,
+}
+            );
+        
+    
+                marker_9afd0ab782e0c9d17072a8796b407ca4.setIcon(icon_e069b27e9613137092a33a97bdbfd70a);
+            
+    
+            var layer_control_962c05656cc72184a71b82421ee08089_layers = {
+                base_layers : {
+                    "openstreetmap" : tile_layer_99c871c8e935c87997253245520ddf3f,
+                },
+                overlays :  {
+                    "\u6d2a\u6c34\u6d78\u6c34\u60f3\u5b9a\u533a\u57df (\u60f3\u5b9a\u6700\u5927\u898f\u6a21)" : tile_layer_0a108e36623d5109adeed73320368588,
+                    "\u571f\u7802\u707d\u5bb3\u8b66\u6212\u533a\u57df (\u571f\u77f3\u6d41)" : tile_layer_cdec7bf5f9867ef037a3ee489a8b9fb4,
+                    "\u6d25\u6ce2\u6d78\u6c34\u60f3\u5b9a" : tile_layer_3d3127dd0f8eaa8a8a9d928a71d2e734,
+                },
+            };
+            let layer_control_962c05656cc72184a71b82421ee08089 = L.control.layers(
+                layer_control_962c05656cc72184a71b82421ee08089_layers.base_layers,
+                layer_control_962c05656cc72184a71b82421ee08089_layers.overlays,
+                {
+  "position": "topright",
+  "collapsed": true,
+  "autoZIndex": true,
+}
+            ).addTo(map_b01498309b7d041ec9e5462f194e9f95);
+
+        
+    
+            map_b01498309b7d041ec9e5462f194e9f95.fitBounds(
+                [[35.8289993, 139.8726811], [38.7272187, 139.8266292], [40.2710819, 141.304674]],
+                {}
+            );
+        
+</script>
+</html>

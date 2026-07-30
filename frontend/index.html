@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>不動産・地域データ ダッシュボード</title>
+    <link rel="stylesheet" href="./style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Noto+Sans+JP:wght@400;600;800&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS & JS for Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script>
+</head>
+<body>
+    <nav class="glass-nav">
+        <div class="nav-brand">Real Estate Dashboard</div>
+        <div class="nav-links">
+            <a href="index.html" class="active">ダッシュボード (地価・人口)</a>
+            <a href="hazard.html">重ねるハザードマップ</a>
+        </div>
+    </nav>
+
+    <main class="dashboard-container">
+        <!-- 左サイド：マップ・コントロールエリア -->
+        <div class="left-panel glass-panel">
+            <header class="header">
+                <h1>エリア動態分析</h1>
+                <p>地図上のピン（取引地点）をクリックして、そのエリア（町丁）の過去20年間の地価・人口トレンドを分析します。</p>
+                
+                <div class="control-header">
+                    <div class="dropdown-controls" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
+                        <select id="pref-select" class="custom-select">
+                            <option value="">都道府県を選択</option>
+                        </select>
+                        <select id="city-select" class="custom-select" disabled>
+                            <option value="">市区町村を選択</option>
+                        </select>
+                        <select id="district-select" class="custom-select" disabled>
+                            <option value="">エリアを選択</option>
+                        </select>
+                        <button id="add-area-btn" class="primary-button" disabled>追加</button>
+                    </div>
+                    <label>比較するエリア (最大10個):</label>
+                    <button id="reset-btn" class="reset-button">クリア</button>
+                </div>
+                
+                <div class="layer-controls" style="margin-bottom: 15px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="toggle-mlit-tiles" style="width: 16px; height: 16px;">
+                        <strong>成約価格等マップ（国交省 XPT001 レイヤー）</strong>を表示
+                    </label>
+                </div>
+                
+                <!-- 選択されたエリアのリスト表示 -->
+                <div id="selected-areas-list" class="selected-areas-list"></div>
+            </header>
+            
+            <div id="interactive-map" class="interactive-map"></div>
+            <p class="select-hint">※ドロップダウンからエリアを追加すると、マップ上にピンが表示され推移を確認できます。</p>
+        </div>
+
+        <!-- 右サイド：グラフエリア -->
+        <div class="charts-grid">
+            <div class="chart-card glass-panel">
+                <div class="chart-header">
+                    <h2>平均地価推移 (円/㎡)</h2>
+                    <span class="badge">Price Trend</span>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="chart-card glass-panel">
+                <div class="chart-header">
+                    <h2>総人口推移 (人)</h2>
+                    <span class="badge">Population Trend</span>
+                </div>
+                <div class="chart-wrapper">
+                    <canvas id="popChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- 街の特性・スコア評価エリア -->
+        <div class="glass-panel" style="margin-top: 2rem;">
+            <div class="header" style="margin-bottom: 1.5rem;">
+                <h1>街の特性スコア（総合評価）</h1>
+                <p>現在の人口構成や直近の取引動向から算出した、エリアの利便性・子育て環境・将来性スコアです。</p>
+            </div>
+            <div class="charts-grid" style="grid-template-columns: 1fr 2fr;">
+                <!-- レーダーチャート（総合評価） -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h2>総合特性スコア</h2>
+                        <span class="badge">Radar</span>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="scoreRadarChart"></canvas>
+                    </div>
+                </div>
+                
+                <!-- 新規スコア推移ラインチャート群（タブ切替または縦積み） -->
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <h2>各指標の推移</h2>
+                        <span class="badge">Score Trends</span>
+                    </div>
+                    <div class="chart-wrapper">
+                        <canvas id="scoreTrendChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+</body>
+</html>

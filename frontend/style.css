@@ -1,0 +1,471 @@
+:root {
+    --bg-dark: #0f172a;
+    --bg-panel: rgba(30, 41, 59, 0.7);
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --accent: #3b82f6;
+    --accent-hover: #60a5fa;
+    --glass-border: rgba(255, 255, 255, 0.1);
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: 'Inter', 'Noto Sans JP', sans-serif;
+    background-color: var(--bg-dark);
+    color: var(--text-main);
+    line-height: 1.6;
+    background-image: 
+        radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.15) 0px, transparent 50%),
+        radial-gradient(at 100% 100%, rgba(147, 51, 234, 0.15) 0px, transparent 50%);
+    background-attachment: fixed;
+    min-height: 100vh;
+}
+
+/* Glassmorphism Navigation */
+.glass-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 2rem;
+    background: rgba(15, 23, 42, 0.8);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--glass-border);
+    position: sticky;
+    top: 0;
+    z-index: 1000;
+}
+
+  /* Dashboard Layout */
+.dashboard-container {
+    padding: 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+.left-panel {
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem;
+}
+
+.header h1 {
+    font-size: 1.8rem;
+    margin-bottom: 0.5rem;
+    background: linear-gradient(90deg, #fff, #94a3b8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.header p {
+    color: var(--text-muted);
+    font-size: 0.95rem;
+    margin-bottom: 1.5rem;
+}
+
+.control-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 0.5rem;
+}
+
+.interactive-map {
+    width: 100%;
+    min-height: 600px;
+    margin-top: 1rem;
+    border-radius: 8px;
+    border: 1px solid var(--glass-border);
+    background: #1e293b;
+    z-index: 1;
+}
+
+.nav-brand {
+    font-size: 1.25rem;
+    font-weight: 800;
+    background: linear-gradient(to right, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.nav-links a {
+    color: var(--text-muted);
+    text-decoration: none;
+    margin-left: 1.5rem;
+    font-weight: 600;
+    transition: color 0.3s;
+}
+
+.nav-links a:hover, .nav-links a.active {
+    color: var(--text-main);
+}
+
+/* Layout */
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 2rem;
+}
+
+.glass-panel {
+    background: var(--bg-panel);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 30px rgba(0, 0, 0, 0.1);
+}
+
+/* Header */
+.page-header {
+    text-align: center;
+    margin-bottom: 3rem;
+}
+
+.page-header h1 {
+    font-size: 2.5rem;
+    margin-bottom: 0.5rem;
+}
+
+.page-header p {
+    color: var(--text-muted);
+    margin-bottom: 2rem;
+}
+
+.control-panel {
+    display: inline-block;
+    padding: 1.5rem;
+    width: 100%;
+    max-width: 600px;
+    text-align: left;
+}
+
+.checkbox-container {
+    background: rgba(15, 23, 42, 0.5);
+    border: 1px solid var(--glass-border);
+    border-radius: 8px;
+    padding: 1rem;
+    max-height: 250px;
+    overflow-y: auto;
+}
+
+.reset-button {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    padding: 0.3rem 0.8rem;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.reset-button:hover {
+    background: rgba(239, 68, 68, 0.4);
+    color: #fee2e2;
+}
+
+/* Custom Select and Primary Button for Control Panel */
+.custom-select {
+    background: rgba(15, 23, 42, 0.8);
+    color: var(--text-main);
+    border: 1px solid var(--glass-border);
+    border-radius: 6px;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.9rem;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.3s;
+}
+
+.custom-select:focus {
+    border-color: var(--accent);
+}
+
+.custom-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.primary-button {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 0.4rem 1rem;
+    border-radius: 6px;
+    font-size: 0.9rem;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.3s;
+}
+
+.primary-button:hover:not(:disabled) {
+    background: var(--accent-hover);
+}
+
+.primary-button:disabled {
+    background: rgba(59, 130, 246, 0.3);
+    cursor: not-allowed;
+    color: rgba(255, 255, 255, 0.5);
+}
+
+/* Selected Areas List */
+.selected-areas-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+    min-height: 32px;
+}
+
+.selected-area-item {
+    display: flex;
+    align-items: center;
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid var(--glass-border);
+    border-radius: 16px;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.85rem;
+    color: var(--text-main);
+    box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+    animation: fadeIn 0.3s ease-out;
+}
+
+.selected-area-color-indicator {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 6px;
+    display: inline-block;
+}
+
+.remove-area-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-size: 1rem;
+    margin-left: 8px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.remove-area-btn:hover {
+    color: #ef4444;
+}
+
+/* Custom Scrollbar for container */
+.checkbox-container::-webkit-scrollbar {
+    width: 6px;
+}
+.checkbox-container::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.05);
+}
+.checkbox-container::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 3px;
+}
+
+.pref-group {
+    margin-bottom: 0.5rem;
+}
+
+.pref-header {
+    background: rgba(59, 130, 246, 0.2);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: 600;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    transition: background 0.3s;
+}
+
+.pref-header:hover {
+    background: rgba(59, 130, 246, 0.4);
+}
+
+.city-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 0.5rem;
+    padding: 0.8rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 0 0 6px 6px;
+    display: none; /* Hidden by default for accordion */
+}
+
+.city-list.open {
+    display: grid;
+}
+
+.city-label {
+    display: flex;
+    align-items: center;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.city-label:hover {
+    color: var(--text-main);
+}
+
+.city-label input[type="checkbox"] {
+    margin-right: 0.4rem;
+    cursor: pointer;
+    accent-color: var(--accent);
+}
+
+.charts-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+}
+
+@media (max-width: 1024px) {
+    .charts-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.chart-card {
+    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+}
+
+.chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.chart-header h2 {
+    font-size: 1.2rem;
+    color: var(--text-main);
+}
+
+.chart-wrapper {
+    position: relative;
+    height: 400px;
+    width: 100%;
+}
+
+.chart-card h2 {
+    font-size: 1.25rem;
+    margin-bottom: 1.5rem;
+    color: var(--text-main);
+    font-weight: 600;
+}
+
+.chart-container {
+    position: relative;
+    height: 350px;
+    width: 100%;
+}
+
+/* Animations */
+.fade-in {
+    animation: fadeIn 0.6s ease-out forwards;
+    opacity: 0;
+    transform: translateY(10px);
+}
+
+@keyframes fadeIn {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Map Page Specifics */
+body.map-page {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+}
+
+.map-container {
+    flex: 1;
+    display: flex;
+    position: relative;
+}
+
+.map-sidebar {
+    width: 350px;
+    margin: 1.5rem;
+    position: absolute;
+    z-index: 1000;
+    height: calc(100% - 3rem);
+    display: flex;
+    flex-direction: column;
+}
+
+.map-sidebar h2 {
+    font-size: 1.2rem;
+    margin-bottom: 1rem;
+}
+
+.map-sidebar p {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+    margin-bottom: 1.5rem;
+}
+
+.legend-box {
+    margin-top: auto;
+    background: rgba(0,0,0,0.2);
+    padding: 1rem;
+    border-radius: 8px;
+}
+
+.legend-box h3 {
+    font-size: 1rem;
+    margin-bottom: 0.5rem;
+}
+
+.legend-list {
+    list-style: none;
+    font-size: 0.85rem;
+}
+
+.legend-list li {
+    margin-bottom: 0.8rem;
+    line-height: 1.4;
+}
+
+.color-box {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    margin-right: 5px;
+    border-radius: 2px;
+}
+
+.color-box.flood { background: #3b82f6; }
+.color-box.landslide { background: #ef4444; }
+.color-box.tsunami { background: #eab308; }
+
+.map-view {
+    flex: 1;
+    width: 100%;
+    height: 100%;
+    z-index: 1;
+}
