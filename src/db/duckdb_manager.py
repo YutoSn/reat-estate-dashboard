@@ -135,7 +135,7 @@ class DuckDBManager:
                 p.municipality_name,
                 p.avg_price_per_sqm,
                 p.transaction_count,
-                pop.population
+                pop.pop_total as population
             FROM price_trend p
             FULL OUTER JOIN populations pop 
                 ON p.year = pop.year AND p.municipality_code = pop.municipality_code
