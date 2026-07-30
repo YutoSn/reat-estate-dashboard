@@ -108,4 +108,4 @@ def get_districts(city_code: str):
 # Vite等のフロントエンド開発サーバーを利用中なので、ビルドした静的ファイルを
 # 配信するルーティングは省略（または public フォルダをマウントするだけ）。
 # 本番運用時は frontend/dist をマウントする。
-app.mount("/", StaticFiles(directory="frontend/public", html=True), name="frontend")
+app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")

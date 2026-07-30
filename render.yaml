@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: real-estate-dashboard
+    env: python
+    buildCommand: "./build.sh"
+    startCommand: "uvicorn server:app --host 0.0.0.0 --port $PORT"
+    envVars:
+      - key: REAL_ESTATE_LIBRARY_API_KEY
+        sync: false
+      - key: E_STAT_APP_ID
+        sync: false
