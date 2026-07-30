@@ -1,0 +1,16 @@
+{
+  "name": "不動産・地域データ",
+  "short_name": "地域データ",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "description": "不動産・地域データ（地価と人口推移）ダッシュボード",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml"
+    }
+  ]
+}
