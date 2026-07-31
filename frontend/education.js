@@ -1,12 +1,4 @@
-document.addEventListener('DOMContentLoaded', () => {
-    // 1. 都道府県リストをハードコードまたはAPIから取得
-    const prefs = [
-        {code: '11', name: '埼玉県'},
-        {code: '12', name: '千葉県'},
-        {code: '13', name: '東京都'},
-        {code: '14', name: '神奈川県'}
-    ];
-    
+document.addEventListener('DOMContentLoaded', async () => {
     const prefSelect = document.getElementById('pref-select');
     const citySelect = document.getElementById('city-select');
     const dashboard = document.getElementById('education-dashboard');
@@ -15,12 +7,20 @@ document.addEventListener('DOMContentLoaded', () => {
     // チャートインスタンス
     let radarChart, nurseryChart, schoolChart, medicalChart, popChart;
 
-    prefs.forEach(p => {
-        const option = document.createElement('option');
-        option.value = p.code;
-        option.textContent = p.name;
-        prefSelect.appendChild(option);
-    });
+    // 1. 都道府県リストをAPIから取得
+    try {
+        const prefRes = await fetch('/api/prefectures');
+        const prefs = await prefRes.json();
+        
+        prefs.forEach(p => {
+            const option = document.createElement('option');
+            option.value = p.code;
+            option.textContent = p.name;
+            prefSelect.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Error fetching prefectures:', error);
+    }
 
     prefSelect.addEventListener('change', async (e) => {
         const prefCode = e.target.value;
@@ -32,7 +32,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (!prefCode) return;
 
         try {
-            const res = await fetch(`/api/cities?pref_code=${prefCode}`);
+            // パスパラメータとして取得
+            const res = await fetch(`/api/cities/${prefCode}`);
             const cities = await res.json();
             
             cities.forEach(city => {
