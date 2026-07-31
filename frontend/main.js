@@ -221,8 +221,8 @@ function initMap() {
     // 東京駅付近を初期中心に
     map = L.map('interactive-map').setView([35.6812, 139.7671], 13);
     
-    // ベースマップ (CartoDB Dark Matter for dark mode)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    // ベースマップ (CartoDB Voyager for clear visibility)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; OpenStreetMap &copy; CARTO'
     }).addTo(map);
 
@@ -332,6 +332,7 @@ function updateCharts() {
     const popDatasets = [];
     const radarDatasets = [];
     const scoreTrendDatasets = [];
+    const detailedScoresList = [];
 
     selectedAreas.forEach((area, index) => {
         const color = COLORS[index % COLORS.length];
@@ -450,6 +451,15 @@ function updateCharts() {
                 borderWidth: 2
             });
         }
+        
+        detailedScoresList.push({
+            id: area.id,
+            name: `${area.pref_name} ${area.city_name} ${area.district_name}`,
+            color: color.border,
+            convenienceScore: convenienceScore,
+            childcareScore: childcareScore,
+            futureScore: futureScore
+        });
 
         scoreTrendDatasets.push({
             label: labelName,
@@ -512,6 +522,39 @@ function updateCharts() {
 
     // --- 選択エリアのリスト表示の更新 ---
     renderSelectedAreasList();
+    renderScoreDetails(detailedScoresList);
+}
+
+function renderScoreDetails(scoresList) {
+    const container = document.getElementById('score-details-container');
+    if (!container) return;
+    
+    container.innerHTML = ''; // クリア
+
+    scoresList.forEach(score => {
+        const card = document.createElement('div');
+        card.className = 'score-detail-card glass-panel';
+        card.style.borderLeft = `4px solid ${score.color}`;
+        
+        card.innerHTML = `
+            <div style="font-weight: 600; margin-bottom: 0.5rem; color: #f8fafc;">${score.name}</div>
+            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                <div class="score-badge">
+                    <span class="score-label">生活利便性・交通</span>
+                    <span class="score-value" style="color: ${score.color}">${score.convenienceScore}</span>
+                </div>
+                <div class="score-badge">
+                    <span class="score-label">子育て・教育環境</span>
+                    <span class="score-value" style="color: ${score.color}">${score.childcareScore}</span>
+                </div>
+                <div class="score-badge">
+                    <span class="score-label">将来性・住民特性</span>
+                    <span class="score-value" style="color: ${score.color}">${score.futureScore}</span>
+                </div>
+            </div>
+        `;
+        container.appendChild(card);
+    });
 }
 
 function renderSelectedAreasList() {

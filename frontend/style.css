@@ -470,6 +470,41 @@ body.map-page {
     z-index: 1;
 }
 
+.score-detail-card {
+    padding: 1rem;
+    border-radius: 8px;
+    background: rgba(15, 23, 42, 0.6);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    transition: transform 0.2s;
+}
+
+.score-detail-card:hover {
+    transform: translateY(-2px);
+}
+
+.score-badge {
+    background: rgba(0,0,0,0.3);
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex: 1;
+    min-width: 100px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.score-label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 0.2rem;
+}
+
+.score-value {
+    font-size: 1.5rem;
+    font-weight: 800;
+}
+
 /* Mobile Optimization */
 @media (max-width: 768px) {
     .glass-nav {
