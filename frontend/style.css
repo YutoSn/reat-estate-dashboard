@@ -494,6 +494,14 @@ body.map-page {
     border: 1px solid rgba(255, 255, 255, 0.05);
 }
 
+.score-subtext {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.4rem;
+    text-align: center;
+    line-height: 1.4;
+}
+
 .score-label {
     font-size: 0.75rem;
     color: var(--text-muted);

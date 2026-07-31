@@ -458,7 +458,12 @@ function updateCharts() {
             color: color.border,
             convenienceScore: convenienceScore,
             childcareScore: childcareScore,
-            futureScore: futureScore
+            futureScore: futureScore,
+            price: latestPriceRecord ? (latestPriceRecord.avg_price_per_sqm || 0) : 0,
+            txCount: latestPriceRecord ? (latestPriceRecord.transaction_count || 0) : 0,
+            pop: latestDetailedPopRecord ? (latestDetailedPopRecord.population || 1) : 1,
+            pop0_14: latestDetailedPopRecord ? (latestDetailedPopRecord.pop_0_14 || 0) : 0,
+            pop15_64: latestDetailedPopRecord ? (latestDetailedPopRecord.pop_15_64 || 0) : 0
         });
 
         scoreTrendDatasets.push({
@@ -536,20 +541,35 @@ function renderScoreDetails(scoresList) {
         card.className = 'score-detail-card glass-panel';
         card.style.borderLeft = `4px solid ${score.color}`;
         
+        const formatPrice = (p) => p > 0 ? (p / 10000).toFixed(1) + '万円/㎡' : 'データなし';
+        const formatPercent = (val, total) => ((val / total) * 100).toFixed(1) + '%';
+        
         card.innerHTML = `
             <div style="font-weight: 600; margin-bottom: 0.5rem; color: #f8fafc;">${score.name}</div>
             <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
                 <div class="score-badge">
                     <span class="score-label">生活利便性・交通</span>
                     <span class="score-value" style="color: ${score.color}">${score.convenienceScore}</span>
+                    <div class="score-subtext">
+                        地価: ${formatPrice(score.price)}<br>
+                        取引件数: ${score.txCount}件
+                    </div>
                 </div>
                 <div class="score-badge">
                     <span class="score-label">子育て・教育環境</span>
                     <span class="score-value" style="color: ${score.color}">${score.childcareScore}</span>
+                    <div class="score-subtext">
+                        14歳以下: ${formatPercent(score.pop0_14, score.pop)}<br>
+                        (${score.pop0_14.toLocaleString()}人)
+                    </div>
                 </div>
                 <div class="score-badge">
                     <span class="score-label">将来性・住民特性</span>
                     <span class="score-value" style="color: ${score.color}">${score.futureScore}</span>
+                    <div class="score-subtext">
+                        15-64歳: ${formatPercent(score.pop15_64, score.pop)}<br>
+                        (${score.pop15_64.toLocaleString()}人)
+                    </div>
                 </div>
             </div>
         `;
