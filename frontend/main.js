@@ -339,30 +339,41 @@ function updateCharts() {
         const pops = [];
         const overallScores = [];
 
-        // 最新の有効なレコードを取得してレーダーチャート用スコアを算出
+        // 最新の有効なレコードを取得
         let latestRecord = area.trend.slice().reverse().find(d => d.population > 0);
         if (!latestRecord && area.trend.length > 0) {
             latestRecord = area.trend[area.trend.length - 1];
         }
+
+        // 年齢別人口データ（詳細データ）を持つ最新のレコードを取得 (例: 2020年の国勢調査)
+        let latestDetailedPopRecord = area.trend.slice().reverse().find(d => d.pop_0_14 != null && d.population > 0) || latestRecord;
 
         let convenienceScore = 0;
         let childcareScore = 0;
         let futureScore = 0;
         
         if (latestRecord) {
-            const pop = latestRecord.population || 1;
-            const pop0_14 = latestRecord.pop_0_14 || 0;
-            const pop15_64 = latestRecord.pop_15_64 || 0;
             const price = latestRecord.avg_price_per_sqm || 0;
             const txCount = latestRecord.transaction_count || 0;
+            // 利便性スコア (地価と取引件数から算出、Max100) は最新年の地価を使用
+            convenienceScore = Math.min(100, Math.round(((price / 1000000) * 60) + Math.min(40, txCount * 1.5)));
+        }
+
+        if (latestDetailedPopRecord) {
+            const pop = latestDetailedPopRecord.population || 1;
+            const pop0_14 = latestDetailedPopRecord.pop_0_14 || 0;
+            const pop15_64 = latestDetailedPopRecord.pop_15_64 || 0;
 
             // 子育てスコア (15%を基準100とする)
             childcareScore = Math.min(100, Math.round((pop0_14 / pop) * (100 / 0.15)));
             // 将来性スコア (65%を基準100とする)
             futureScore = Math.min(100, Math.round((pop15_64 / pop) * (100 / 0.65)));
-            // 利便性スコア (地価と取引件数から算出、Max100)
-            convenienceScore = Math.min(100, Math.round(((price / 1000000) * 60) + Math.min(40, txCount * 1.5)));
         }
+
+        // 推移用の年齢割合（データがない年は直近の割合を引き継ぐ）
+        let firstDetailedPopRecord = area.trend.find(d => d.pop_0_14 != null && d.population > 0);
+        let lastPop0_14Ratio = firstDetailedPopRecord ? (firstDetailedPopRecord.pop_0_14 / firstDetailedPopRecord.population) : 0;
+        let lastPop15_64Ratio = firstDetailedPopRecord ? (firstDetailedPopRecord.pop_15_64 / firstDetailedPopRecord.population) : 0;
 
         for(let y = startYear + 1; y <= currentYear; y++) {
             const record = area.trend.find(d => d.year === y);
@@ -372,13 +383,16 @@ function updateCharts() {
             // 推移用の総合スコア計算
             if (record && record.population) {
                 const pop = record.population;
-                const p0_14 = record.pop_0_14 || 0;
-                const p15_64 = record.pop_15_64 || 0;
                 const pr = record.avg_price_per_sqm || 0;
                 const tx = record.transaction_count || 0;
                 
-                let cScore = Math.min(100, ((p0_14 / pop) * (100 / 0.15)));
-                let fScore = Math.min(100, ((p15_64 / pop) * (100 / 0.65)));
+                if (record.pop_0_14 != null) {
+                    lastPop0_14Ratio = record.pop_0_14 / pop;
+                    lastPop15_64Ratio = record.pop_15_64 / pop;
+                }
+                
+                let cScore = Math.min(100, (lastPop0_14Ratio * (100 / 0.15)));
+                let fScore = Math.min(100, (lastPop15_64Ratio * (100 / 0.65)));
                 let cvScore = Math.min(100, ((pr / 1000000) * 60) + Math.min(40, tx * 1.5));
                 
                 overallScores.push(Math.round((cScore + fScore + cvScore) / 3));
