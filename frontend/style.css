@@ -517,4 +517,37 @@ body.map-page {
     .header p {
         font-size: 0.85rem;
     }
+    
+    /* Map sidebar mobile optimization */
+    .map-sidebar {
+        width: calc(100% - 20px);
+        margin: 10px;
+        height: auto;
+        max-height: 35vh;
+        top: auto;
+        bottom: 20px;
+        overflow-y: auto;
+        padding: 1rem;
+    }
+    .map-sidebar h2 {
+        font-size: 1.1rem;
+        margin-bottom: 0.5rem;
+    }
+    .map-sidebar > p {
+        display: none;
+    }
+    .legend-box {
+        padding: 0.75rem;
+        margin-top: 0;
+    }
+    .legend-box h3 {
+        font-size: 0.9rem;
+    }
+    .legend-box p {
+        font-size: 0.8rem;
+    }
+    .legend-list li {
+        font-size: 0.8rem;
+        margin-bottom: 0.5rem;
+    }
 }
