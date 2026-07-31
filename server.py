@@ -57,6 +57,29 @@ def get_mlit_tiles(z: int, x: int, y: int):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/education_trend")
+def get_education_trend(city_code: str):
+    """
+    指定された市区町村の教育・子育て関連指標の20年間の推移を取得する。
+    """
+    db = DuckDBManager(DB_PATH)
+    try:
+        df = db.get_education_trend(city_code)
+        
+        # 最新年からTARGET_YEARS(20年)分にフィルタリング
+        current_year = datetime.datetime.now().year
+        df = df[df['year'] > (current_year - TARGET_YEARS)]
+        
+        # NaNをNoneに変換
+        df = df.replace({float('nan'): None})
+        
+        return {
+            "city_code": city_code,
+            "trend": df.to_dict(orient="records")
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+        
 @app.get("/api/trend")
 def get_district_trend(city_code: str, district_name: str):
     """指定された市区町村・地区の過去20年の地価および人口トレンドを取得"""

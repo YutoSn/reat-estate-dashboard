@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>教育・子育て分析ダッシュボード</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h2>不動産AIアナリスト</h2>
+            </div>
+            
+            <nav class="nav-links">
+                <a href="index.html" class="nav-item">
+                    <span class="nav-icon">📊</span>
+                    エリア比較（町丁）
+                </a>
+                <a href="hazard.html" class="nav-item">
+                    <span class="nav-icon">⚠️</span>
+                    ハザードリスク
+                </a>
+                <a href="education.html" class="nav-item active">
+                    <span class="nav-icon">🎓</span>
+                    教育・子育て分析
+                </a>
+            </nav>
+
+            <div class="control-panel">
+                <h3>市区町村を選択</h3>
+                <div class="form-group">
+                    <label for="pref-select">都道府県</label>
+                    <select id="pref-select">
+                        <option value="">選択してください</option>
+                        <!-- Options populated by JS -->
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="city-select">市区町村</label>
+                    <select id="city-select" disabled>
+                        <option value="">選択してください</option>
+                    </select>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content" style="flex: 1; overflow-y: auto; padding: 24px;">
+            <header class="content-header">
+                <h1 id="selected-city-title">市区町村を選択してください</h1>
+                <p class="subtitle">人口1万人あたりの教育・医療・保育インフラの充実度と推移</p>
+            </header>
+
+            <!-- Education Dashboard Area -->
+            <div id="education-dashboard" class="education-dashboard" style="display: none; max-width: 1200px; margin: 0 auto;">
+                
+                <!-- Radar Score -->
+                <div class="dashboard-section" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 24px;">
+                    <h2 style="font-size: 1.25rem; font-weight: 600; color: #1e293b; margin-bottom: 16px;">子育てインフラスコア（直近データ）</h2>
+                    <div style="display: flex; flex-wrap: wrap; gap: 24px;">
+                        <div style="flex: 1; min-width: 300px; max-width: 400px;">
+                            <canvas id="scoreRadarChart"></canvas>
+                        </div>
+                        <div style="flex: 2; min-width: 300px;" id="score-details">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Trends -->
+                <div class="dashboard-section" style="background: white; border-radius: 12px; padding: 24px; box-shadow: 0 4px 6px rgba(0,0,0,0.05);">
+                    <h2 style="font-size: 1.25rem; font-weight: 600; color: #1e293b; margin-bottom: 16px;">インフラ推移（過去20年）</h2>
+                    
+                    <div class="chart-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(400px, 1fr)); gap: 24px;">
+                        <div class="chart-card">
+                            <h3 style="font-size: 1rem; color: #475569; margin-bottom: 8px;">保育・幼稚園数（人口1万人あたり）</h3>
+                            <canvas id="nurseryTrendChart"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <h3 style="font-size: 1rem; color: #475569; margin-bottom: 8px;">小学校・中学校数（人口1万人あたり）</h3>
+                            <canvas id="schoolTrendChart"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <h3 style="font-size: 1rem; color: #475569; margin-bottom: 8px;">小児科医師数（人口1万人あたり）</h3>
+                            <canvas id="medicalTrendChart"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <h3 style="font-size: 1rem; color: #475569; margin-bottom: 8px;">0-14歳人口比率</h3>
+                            <canvas id="popRatioChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </main>
+    </div>
+    
+    <script src="education.js"></script>
+</body>
+</html>

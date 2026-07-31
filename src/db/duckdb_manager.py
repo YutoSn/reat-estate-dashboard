@@ -38,6 +38,21 @@ class DuckDBManager:
                     pop_65_over DOUBLE
                 )
             """)
+            
+            # 教育・子育て統計用テーブル
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS education_stats (
+                    year INTEGER,
+                    municipality_code VARCHAR,
+                    nurseries DOUBLE,
+                    elementary_schools DOUBLE,
+                    elementary_teachers DOUBLE,
+                    junior_high_schools DOUBLE,
+                    kindergartens DOUBLE,
+                    pediatricians DOUBLE,
+                    libraries DOUBLE
+                )
+            """)
 
     def insert_land_prices(self, data: List[Dict[str, Any]]):
         """不動産価格データを挿入"""
@@ -114,6 +129,62 @@ class DuckDBManager:
         
         with duckdb.connect(self.db_path) as conn:
             conn.execute("INSERT INTO populations SELECT * FROM df_pivot")
+
+    def insert_education_stats(self, data: List[Dict[str, Any]]):
+        """教育統計データを挿入"""
+        if not data:
+            return
+            
+        records = []
+        for item in data:
+            try:
+                year_str = str(item.get('@time', ''))[:4]
+                year = int(year_str) if year_str.isdigit() else None
+                
+                area_code = str(item.get('@area', '')).zfill(5)
+                value = float(item.get('$', 0))
+                category = item.get('_category', '')
+                
+                records.append({
+                    'year': year,
+                    'municipality_code': area_code,
+                    'value': value,
+                    'category': category
+                })
+            except Exception:
+                continue
+                
+        if not records:
+            return
+
+        df = pd.DataFrame(records)
+        df_pivot = df.pivot_table(
+            index=['year', 'municipality_code'], 
+            columns='category', 
+            values='value',
+            aggfunc='first'
+        ).reset_index()
+        
+        col_mapping = {
+            'J2506': 'nurseries',
+            'I5101': 'elementary_schools',
+            'I510110': 'elementary_teachers',
+            'I5102': 'junior_high_schools',
+            'I5103': 'kindergartens',
+            'J4403': 'pediatricians',
+            'I6100': 'libraries'
+        }
+        df_pivot = df_pivot.rename(columns=col_mapping)
+        
+        expected_cols = list(col_mapping.values())
+        for col in expected_cols:
+            if col not in df_pivot.columns:
+                df_pivot[col] = None
+                
+        df_pivot = df_pivot[['year', 'municipality_code'] + expected_cols].copy()
+        
+        with duckdb.connect(self.db_path) as conn:
+            conn.execute("INSERT INTO education_stats SELECT * FROM df_pivot")
 
     def get_all_integrated_trends(self) -> pd.DataFrame:
         """全市区町村の地価推移と人口推移を統合して取得 (従来機能用)"""
@@ -213,3 +284,27 @@ class DuckDBManager:
         with duckdb.connect(self.db_path) as conn:
             df = conn.execute(query, [city_code]).df()
             return df['district_name'].tolist()
+
+    def get_education_trend(self, city_code: str) -> pd.DataFrame:
+        """指定された市区町村の教育・子育て関連指標の推移を取得"""
+        query = """
+            SELECT 
+                COALESCE(e.year, pop.year) as year,
+                COALESCE(e.municipality_code, pop.municipality_code) as municipality_code,
+                pop.pop_total as population,
+                pop.pop_0_14,
+                e.nurseries,
+                e.elementary_schools,
+                e.elementary_teachers,
+                e.junior_high_schools,
+                e.kindergartens,
+                e.pediatricians,
+                e.libraries
+            FROM populations pop
+            FULL OUTER JOIN education_stats e 
+                ON pop.year = e.year AND pop.municipality_code = e.municipality_code
+            WHERE COALESCE(e.municipality_code, pop.municipality_code) = ?
+            ORDER BY year
+        """
+        with duckdb.connect(self.db_path) as conn:
+            return conn.execute(query, [city_code]).df()
