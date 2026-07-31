@@ -14,7 +14,8 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'index.html'),
-        hazard: resolve(__dirname, 'hazard.html')
+        hazard: resolve(__dirname, 'hazard.html'),
+        education: resolve(__dirname, 'education.html')
       }
     }
   }
