@@ -348,14 +348,17 @@ function updateCharts() {
         // 年齢別人口データ（詳細データ）を持つ最新のレコードを取得 (例: 2020年の国勢調査)
         let latestDetailedPopRecord = area.trend.slice().reverse().find(d => d.pop_0_14 != null && d.population > 0) || latestRecord;
 
+        // 地価・取引データを持つ最新のレコードを取得
+        let latestPriceRecord = area.trend.slice().reverse().find(d => d.avg_price_per_sqm > 0) || latestRecord;
+
         let convenienceScore = 0;
         let childcareScore = 0;
         let futureScore = 0;
         
-        if (latestRecord) {
-            const price = latestRecord.avg_price_per_sqm || 0;
-            const txCount = latestRecord.transaction_count || 0;
-            // 利便性スコア (地価と取引件数から算出、Max100) は最新年の地価を使用
+        if (latestPriceRecord) {
+            const price = latestPriceRecord.avg_price_per_sqm || 0;
+            const txCount = latestPriceRecord.transaction_count || 0;
+            // 利便性スコア (地価と取引件数から算出、Max100) は最新の地価を使用
             convenienceScore = Math.min(100, Math.round(((price / 1000000) * 60) + Math.min(40, txCount * 1.5)));
         }
 
@@ -375,6 +378,11 @@ function updateCharts() {
         let lastPop0_14Ratio = firstDetailedPopRecord ? (firstDetailedPopRecord.pop_0_14 / firstDetailedPopRecord.population) : 0;
         let lastPop15_64Ratio = firstDetailedPopRecord ? (firstDetailedPopRecord.pop_15_64 / firstDetailedPopRecord.population) : 0;
 
+        // 推移用の地価データ（データがない年は直近の地価を引き継ぐ）
+        let firstPriceRecord = area.trend.find(d => d.avg_price_per_sqm > 0);
+        let lastPrice = firstPriceRecord ? firstPriceRecord.avg_price_per_sqm : 0;
+        let lastTx = firstPriceRecord ? firstPriceRecord.transaction_count : 0;
+
         for(let y = startYear + 1; y <= currentYear; y++) {
             const record = area.trend.find(d => d.year === y);
             prices.push(record ? record.avg_price_per_sqm : null);
@@ -383,17 +391,20 @@ function updateCharts() {
             // 推移用の総合スコア計算
             if (record && record.population) {
                 const pop = record.population;
-                const pr = record.avg_price_per_sqm || 0;
-                const tx = record.transaction_count || 0;
                 
                 if (record.pop_0_14 != null) {
                     lastPop0_14Ratio = record.pop_0_14 / pop;
                     lastPop15_64Ratio = record.pop_15_64 / pop;
                 }
                 
+                if (record.avg_price_per_sqm != null) {
+                    lastPrice = record.avg_price_per_sqm;
+                    lastTx = record.transaction_count;
+                }
+                
                 let cScore = Math.min(100, (lastPop0_14Ratio * (100 / 0.15)));
                 let fScore = Math.min(100, (lastPop15_64Ratio * (100 / 0.65)));
-                let cvScore = Math.min(100, ((pr / 1000000) * 60) + Math.min(40, tx * 1.5));
+                let cvScore = Math.min(100, ((lastPrice / 1000000) * 60) + Math.min(40, lastTx * 1.5));
                 
                 overallScores.push(Math.round((cScore + fScore + cvScore) / 3));
             } else {
