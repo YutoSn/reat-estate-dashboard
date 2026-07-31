@@ -62,7 +62,7 @@ def get_education_trend(city_code: str):
     """
     指定された市区町村の教育・子育て関連指標の20年間の推移を取得する。
     """
-    db = DuckDBManager(DB_PATH)
+    db = DuckDBManager(DUCKDB_FILE)
     try:
         df = db.get_education_trend(city_code)
         
