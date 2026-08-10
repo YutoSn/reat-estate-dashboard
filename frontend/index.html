@@ -91,6 +91,20 @@
           ひとつの「正解」は用意していません。
         </p>
         <div class="weights" id="weights"></div>
+
+        <details class="logic">
+          <summary>6つの観点のスコアはどう出しているか</summary>
+          <div class="logic-body">
+            <p class="panel-note">
+              まず指標ごとに <strong>対象402市区町村の中でのパーセンタイル順位</strong> を
+              0〜100点にします。絶対値を線形に伸縮すると外れ値ひとつで全体が潰れるためです。
+              観点の点数は、その観点に属する指標の点数を単純平均したもの。
+              <strong>点数は「この8都県の中での相対的な位置」であって絶対評価ではありません。</strong>
+              取れなかった指標はその観点の平均から外れます（点数が下がるわけではありません）。
+            </p>
+            <div id="logic-dimensions"></div>
+          </div>
+        </details>
       </div>
 
       <div class="panel">
@@ -155,6 +169,19 @@
             </div>
             <div class="highlight-list" id="detail-highlights"></div>
           </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>スコアの内訳</h2>
+            <span class="panel-hint">クリックで計算に使った値まで開きます</span>
+          </div>
+          <p class="panel-note">
+            点数の低い観点をひらくと、どの指標が足を引っ張っているのか、
+            その指標がどの統計値から出たのかまでたどれます。
+            順位は対象402市区町村の中の順位で、1位がいちばん良い側です。
+          </p>
+          <div class="breakdown" id="detail-breakdown"></div>
         </div>
 
         <div class="panel">

@@ -1,5 +1,6 @@
 """家を建てる場所を選ぶためのダッシュボード API。"""
 
+import functools
 import os
 from typing import Any
 
@@ -24,9 +25,16 @@ from src.analysis.geo import access_for
 from src.analysis.metrics import (
     MIN_PRICE_DEALS,
     derive_metrics,
+    latest_value,
     project_child_population,
 )
-from src.analysis.scoring import DIMENSIONS, METRIC_SPECS, metric_catalog
+from src.analysis.scoring import (
+    DIMENSIONS,
+    METRIC_SPECS,
+    metric_catalog,
+    metric_ranks,
+    score_breakdown,
+)
 from src.db.duckdb_manager import DuckDBManager
 from src.indicators import INDICATOR_BY_KEY, STALE_INDICATORS
 
@@ -144,10 +152,12 @@ def get_municipality(city_code: str):
 
     price_latest = db.get_latest_land_price_by_city(years=3)
     unit_price = None
+    deals = None
     if not price_latest.empty:
         row = price_latest[price_latest["municipality_code"] == city_code]
         if not row.empty:
             unit_price = _clean(row.iloc[0]["land_unit_price"])
+            deals = _clean(row.iloc[0]["deals"])
 
     # 土地面積の中央値は予算計算の土台になるので、スコア側と同じ件数条件で採る
     land_area = db.get_land_area_by_city(years=10)
@@ -164,10 +174,12 @@ def get_municipality(city_code: str):
         stats,
         land_unit_price=unit_price,
         land_area_median=area_median,
+        land_deals=deals,
         access=access_for(city_code),
         reference_year=current_year(),
     )
     observation_years = metrics.pop("_years", {})
+    extra_inputs = metrics.pop("_extra_inputs", {})
 
     # 統計の推移（表示年数を絞る）
     cutoff = current_year() - STATS_HISTORY_YEARS
@@ -181,11 +193,23 @@ def get_municipality(city_code: str):
 
     scores = _scores_for(city_code)
 
+    # 各指標の計算に使った統計値を、観測年つきでそのまま返す。
+    # 「住環境が低いのはなぜか」を、指標 → 元の統計値までたどれるようにするため。
+    input_keys = {key for spec in METRIC_SPECS for key in spec.inputs}
+    input_values = {
+        key: latest_value(stats, key, reference_year=current_year())
+        for key in input_keys
+    }
+
     return {
         "municipality": {k: _clean(v) for k, v in info.items()},
         "metrics": {k: _clean(v) for k, v in metrics.items()},
         "observation_years": observation_years,
         "scores": scores,
+        "score_breakdown": score_breakdown(
+            metrics, scores, input_values, _metric_ranks(), city_code,
+            extra_inputs=extra_inputs,
+        ),
         "stats_trend": trend_records,
         "price_trend": _price_records(price_trend),
         "child_projection": project_child_population(
@@ -299,6 +323,12 @@ def get_mlit_tiles(z: int, x: int, y: int):
 
 
 # ------------------------------------------------------------------ 内部
+@functools.lru_cache(maxsize=1)
+def _metric_ranks() -> dict[str, Any]:
+    """指標ごとの順位表。DBは読み取り専用で中身が変わらないので一度だけ作る。"""
+    return metric_ranks(db.get_scores())
+
+
 def _birth_year() -> int:
     from config import CHILD_BIRTH_YEAR
 

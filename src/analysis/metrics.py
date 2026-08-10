@@ -51,10 +51,14 @@ def _safe_ratio(
     return numerator / denominator * scale
 
 
-def change_rate(
+def change_rate_detail(
     stats: pd.DataFrame, indicator: str, span_years: int = 10
-) -> float | None:
-    """指標の直近 span_years 年での変化率（%）。"""
+) -> dict[str, Any] | None:
+    """変化率と、それを出すのに使った2時点（年と値）。
+
+    変化率だけを見せても「いつと比べた何%か」が分からないため、
+    比較の両端を一緒に返して画面に出せるようにしている。
+    """
     if stats.empty or indicator not in stats.columns:
         return None
     series = stats[indicator].dropna()
@@ -73,7 +77,21 @@ def change_rate(
     latest = float(series.loc[series.index.max()])
     if base == 0:
         return None
-    return (latest - base) / base * 100.0
+    return {
+        "rate": (latest - base) / base * 100.0,
+        "base_year": int(earlier.index[-1]),
+        "base_value": base,
+        "latest_year": latest_year,
+        "latest_value": latest,
+    }
+
+
+def change_rate(
+    stats: pd.DataFrame, indicator: str, span_years: int = 10
+) -> float | None:
+    """指標の直近 span_years 年での変化率（%）。"""
+    detail = change_rate_detail(stats, indicator, span_years)
+    return detail["rate"] if detail else None
 
 
 def derive_metrics(
@@ -81,6 +99,7 @@ def derive_metrics(
     land_unit_price: float | None = None,
     land_price_change: float | None = None,
     land_area_median: float | None = None,
+    land_deals: float | None = None,
     access: dict[str, Any] | None = None,
     reference_year: int | None = None,
 ) -> dict[str, Any]:
@@ -151,7 +170,8 @@ def derive_metrics(
         metrics["net_migration_rate"] = None
 
     metrics["birth_rate"] = _safe_ratio(val("births"), pop_total, 1000)
-    metrics["young_pop_change_10y"] = change_rate(stats, "pop_0_14", 10)
+    young_change = change_rate_detail(stats, "pop_0_14", 10)
+    metrics["young_pop_change_10y"] = young_change["rate"] if young_change else None
     metrics["pop_change_10y"] = change_rate(stats, "pop_total", 10)
     metrics["day_night_ratio"] = val("day_night_ratio")
 
@@ -188,6 +208,42 @@ def derive_metrics(
     metrics["ownership_ratio"] = _safe_ratio(
         val("owned_homes"), val("dwellings_occupied"), 100
     )
+
+    # --- 統計表から直接は取れない入力値 -----------------------------------
+    # 指標カタログの inputs は e-Stat の統計指標しか指せない。時系列の両端や
+    # 取引データ由来の値はここで組み立てて、画面の内訳に並べられるようにする。
+    extra_inputs: dict[str, list[dict[str, Any]]] = {}
+    if young_change:
+        extra_inputs["young_pop_change_10y"] = [
+            {
+                "label": "15歳未満人口（最新）",
+                "value": young_change["latest_value"],
+                "unit": "人",
+                "year": young_change["latest_year"],
+            },
+            {
+                "label": "15歳未満人口（比較時点）",
+                "value": young_change["base_value"],
+                "unit": "人",
+                "year": young_change["base_year"],
+            },
+        ]
+    if land_unit_price is not None:
+        # 中央値そのものは指標の値なので繰り返さない。何件から取った中央値かを添える。
+        entries = []
+        if land_deals is not None:
+            entries.append(
+                {"label": "中央値の元になった取引件数", "value": land_deals,
+                 "unit": "件", "year": None}
+            )
+        if land_area_median is not None:
+            entries.append(
+                {"label": "取引された土地の広さ（中央値）", "value": land_area_median,
+                 "unit": "㎡", "year": None}
+            )
+        if entries:
+            extra_inputs["land_unit_price"] = entries
+    metrics["_extra_inputs"] = extra_inputs
 
     # --- 各値の観測年（透明性のため一緒に返す） --------------------------
     metrics["_years"] = {
@@ -253,6 +309,7 @@ def build_metric_table(
             reference_year=reference_year,
         )
         metrics.pop("_years", None)
+        metrics.pop("_extra_inputs", None)
         # hub_name は文字列なのでスコア計算に載せない（実数テーブルは数値だけ）
         metrics.pop("hub_name", None)
         metrics["municipality_code"] = code
