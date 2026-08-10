@@ -332,6 +332,107 @@ input[type="range"]::-moz-range-thumb {
 .highlight.is-warn { border-color: var(--warm); }
 .highlight.is-warn .highlight-value { color: var(--warm); }
 
+/* ------------------------------------------------- スコアの出し方・内訳 */
+.logic { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .8rem; }
+.logic > summary {
+  cursor: pointer;
+  font-size: .86rem;
+  font-weight: 600;
+  color: var(--accent);
+  list-style: none;
+}
+.logic > summary::-webkit-details-marker { display: none; }
+.logic > summary::before { content: '▸ '; }
+.logic[open] > summary::before { content: '▾ '; }
+.logic-body { margin-top: .8rem; }
+
+.logic-dim { padding: .8rem 0; border-top: 1px dashed var(--border); }
+.logic-dim-head { display: flex; align-items: baseline; gap: .6rem; }
+.logic-dim-head h3 { margin: 0; font-size: .95rem; }
+.logic-weight { font-size: .74rem; color: var(--text-faint); }
+.logic-desc { margin: .2rem 0 .5rem; font-size: .8rem; color: var(--text-soft); }
+
+.logic-metrics { list-style: none; margin: 0; padding: 0; display: grid; gap: .6rem; }
+.logic-metric {
+  padding: .5rem .7rem;
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.logic-metric-head { display: flex; align-items: baseline; gap: .5rem; flex-wrap: wrap; }
+.logic-metric-name { font-size: .85rem; font-weight: 600; }
+.logic-direction { font-size: .68rem; padding: .05rem .4rem; border-radius: 999px; }
+.logic-direction.is-up { background: var(--accent-soft); color: var(--accent); }
+.logic-direction.is-down { background: rgba(201, 111, 63, .14); color: var(--warm); }
+.logic-formula {
+  display: block;
+  margin-top: .3rem;
+  font-size: .76rem;
+  line-height: 1.6;
+  color: var(--text);
+  word-break: break-word;
+}
+.logic-unit { color: var(--text-faint); }
+.logic-metric-desc { margin: .3rem 0 0; font-size: .74rem; line-height: 1.6; color: var(--text-soft); }
+
+.breakdown { display: grid; gap: .5rem; margin-top: .3rem; }
+.breakdown-dim { border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt); }
+.breakdown-summary {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(60px, 1fr) 2.5rem auto;
+  align-items: center;
+  gap: .6rem;
+  padding: .6rem .8rem;
+  cursor: pointer;
+  list-style: none;
+  font-size: .85rem;
+}
+.breakdown-summary::-webkit-details-marker { display: none; }
+.breakdown-name { font-weight: 600; }
+.breakdown-bar { height: 7px; border-radius: 999px; background: var(--border); overflow: hidden; }
+.breakdown-bar-fill { display: block; height: 100%; border-radius: 999px; }
+.breakdown-score { font-variant-numeric: tabular-nums; text-align: right; font-weight: 600; }
+.breakdown-why { font-size: .74rem; color: var(--text-soft); }
+
+.breakdown-body {
+  padding: 0 .8rem .8rem;
+  display: grid;
+  gap: .6rem;
+  border-top: 1px dashed var(--border);
+  padding-top: .7rem;
+}
+.breakdown-metric {
+  padding: .55rem .7rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.breakdown-metric-head {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  flex-wrap: wrap;
+}
+.breakdown-metric-name { font-size: .84rem; font-weight: 600; flex: 1 1 8rem; }
+.breakdown-metric-value { font-size: .84rem; font-variant-numeric: tabular-nums; }
+.breakdown-metric-score { font-size: .84rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.breakdown-rank { font-size: .7rem; padding: .05rem .4rem; border-radius: 999px; white-space: nowrap; }
+.breakdown-rank.is-high { background: var(--accent-soft); color: var(--accent); }
+.breakdown-rank.is-mid { background: var(--surface-alt); color: var(--text-soft); }
+.breakdown-rank.is-low { background: rgba(201, 111, 63, .14); color: var(--warm); }
+
+.breakdown-inputs { list-style: none; margin: .45rem 0 0; padding: 0; display: grid; gap: .2rem; }
+.breakdown-inputs li {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  font-size: .75rem;
+  color: var(--text-soft);
+}
+.breakdown-inputs .input-name { flex: 1 1 auto; }
+.breakdown-inputs .input-value { font-variant-numeric: tabular-nums; color: var(--text); }
+.breakdown-inputs .input-year { color: var(--text-faint); min-width: 3.2rem; text-align: right; }
+
 .btn, .btn-ghost {
   border-radius: 9px;
   font: inherit;
@@ -590,4 +691,11 @@ input[type="range"]::-moz-range-thumb {
   .select { width: 100%; }
   .budget-form { grid-template-columns: 1fr 1fr; }
   .field > .input-unit { min-width: 0; }
+  /* 幅が足りないので、観点名＋バー／点数＋理由の2段に折り返す */
+  .breakdown-summary {
+    grid-template-columns: 1fr auto;
+    gap: .4rem .6rem;
+  }
+  .breakdown-bar { order: 3; grid-column: 1 / -1; }
+  .breakdown-why { order: 4; grid-column: 1 / -1; }
 }

@@ -83,6 +83,7 @@ async function init() {
   renderTimelineBanner();
   setupBudgetControls();
   renderWeightControls();
+  renderScoreLogic();
   fillPrefectureSelects();
 
   document.getElementById('reset-weights').addEventListener('click', () => {
@@ -338,6 +339,192 @@ function storeBudget() {
   } catch {
     // プライベートブラウジング等で保存できなくても動作には影響しない
   }
+}
+
+// ------------------------------------------------------- スコアの出し方
+/** 「探す」画面の折りたたみ。観点ごとに、構成指標と計算式を並べる。 */
+function renderScoreLogic() {
+  const container = document.getElementById('logic-dimensions');
+  container.innerHTML = '';
+
+  state.meta.dimensions.forEach((dim) => {
+    const block = el('div', 'logic-dim');
+    const head = el('div', 'logic-dim-head');
+    head.append(el('h3', null, dim.label));
+    head.append(el('span', 'logic-weight', `既定 ${Math.round(dim.default_weight * 100)}%`));
+    block.append(head);
+    block.append(el('p', 'logic-desc', dim.description));
+
+    const list = el('ul', 'logic-metrics');
+    state.meta.metrics
+      .filter((metric) => metric.dimension === dim.key)
+      .forEach((metric) => {
+        const item = el('li', 'logic-metric');
+        const title = el('div', 'logic-metric-head');
+        title.append(el('span', 'logic-metric-name', metric.label));
+        title.append(
+          el(
+            'span',
+            `logic-direction ${metric.higher_is_better ? 'is-up' : 'is-down'}`,
+            metric.higher_is_better ? '大きいほど高得点' : '小さいほど高得点',
+          ),
+        );
+        item.append(title);
+        if (metric.formula) {
+          const formula = el('code', 'logic-formula', metric.formula);
+          if (metric.unit) formula.append(el('span', 'logic-unit', `　→ ${metric.unit}`));
+          item.append(formula);
+        }
+        item.append(el('p', 'logic-metric-desc', metric.description));
+        list.append(item);
+      });
+    block.append(list);
+    container.append(block);
+  });
+}
+
+/** 「詳しく見る」画面。観点ごとの点数を、指標と元の統計値まで開けるようにする。 */
+function renderBreakdown(breakdown, fit) {
+  const container = document.getElementById('detail-breakdown');
+  container.innerHTML = '';
+  if (!breakdown || breakdown.length === 0) return;
+
+  breakdown.forEach((dim) => {
+    // 世帯年収を入れているときは、価格の点数ではなく予算適合の点数を出す
+    const overridden = dim.dimension === 'affordability' && budgetActive();
+    const score = overridden ? (fit ? fit.score : null) : dim.score;
+
+    const box = el('details', 'breakdown-dim');
+    const summary = el('summary', 'breakdown-summary');
+    summary.append(el('span', 'breakdown-name', overridden ? '予算適合' : dim.label));
+
+    const bar = el('span', 'breakdown-bar');
+    if (score !== null && score !== undefined) {
+      const fill = el('span', 'breakdown-bar-fill');
+      fill.style.width = `${Math.max(2, Math.min(100, score))}%`;
+      fill.style.background = scoreColor(score);
+      bar.append(fill);
+    }
+    summary.append(bar);
+    summary.append(el('span', 'breakdown-score', score === null || score === undefined
+      ? '—' : fmt(score, 0)));
+    summary.append(el('span', 'breakdown-why', weakestNote(dim, overridden, fit)));
+    box.append(summary);
+
+    const body = el('div', 'breakdown-body');
+    if (overridden) {
+      body.append(el('p', 'logic-metric-desc', budgetExplanation(fit)));
+    }
+    dim.metrics.forEach((metric) => body.append(metricRow(metric)));
+    box.append(body);
+    container.append(box);
+  });
+}
+
+/** 観点の見出しに出す一言。何が足を引っ張っているかを名指しする。 */
+function weakestNote(dim, overridden, fit) {
+  if (overridden) {
+    if (!fit) return '必要額を出せません';
+    return fit.withinBudget ? '予算内' : '予算を超えます';
+  }
+  const scored = dim.metrics.filter((m) => m.score !== null && m.score !== undefined);
+  if (scored.length === 0) return 'データなし';
+  const weakest = scored.reduce((a, b) => (a.score <= b.score ? a : b));
+  if (weakest.score >= 50) return '足を引っ張る指標はありません';
+  return `${weakest.label}が${weakest.rank ? `${fmt(weakest.rank)}位` : '下位'}`;
+}
+
+function budgetExplanation(fit) {
+  if (!fit) return '土地の取引が少なく、必要額を出せませんでした。';
+  return `必要額 ${fmt(fit.required)}万円（土地${fmt(fit.area)}㎡ ${fmt(fit.landCost)}万円`
+    + ` ＋ 建物・諸費用 ${fmt(state.budget.buildingBudget)}万円）に対して`
+    + ` 予算 ${fmt(totalBudget())}万円。予算比 ${fmt(fit.ratio, 2)} 倍。`;
+}
+
+/**
+ * 表示桁数。図書館密度0.115のように1未満の指標は、既定の1桁だと
+ * 「0.1」に潰れて自治体間の差が見えなくなるので桁を足す。
+ */
+function metricDigits(metric) {
+  const value = Math.abs(metric.value);
+  if (value > 0 && value < 1) return Math.max(metric.digits, 2);
+  return metric.digits;
+}
+
+function metricRow(metric) {
+  const row = el('div', 'breakdown-metric');
+
+  const head = el('div', 'breakdown-metric-head');
+  head.append(el('span', 'breakdown-metric-name', metric.label));
+  head.append(
+    el(
+      'span',
+      'breakdown-metric-value',
+      metric.value === null || metric.value === undefined
+        ? '—'
+        : `${fmt(metric.value, metricDigits(metric))}${metric.unit === '-' ? '' : metric.unit}`,
+    ),
+  );
+
+  const rank = el('span', 'breakdown-rank');
+  if (metric.rank && metric.total) {
+    rank.textContent = `${fmt(metric.total)}中 ${fmt(metric.rank)}位`;
+    rank.classList.add(metric.rank <= metric.total / 3 ? 'is-high'
+      : metric.rank >= (metric.total * 2) / 3 ? 'is-low' : 'is-mid');
+  } else {
+    rank.textContent = '順位なし';
+  }
+  head.append(rank);
+
+  const score = el('span', 'breakdown-metric-score');
+  score.textContent = metric.score === null || metric.score === undefined
+    ? '—' : `${fmt(metric.score, 0)}点`;
+  if (metric.score !== null && metric.score !== undefined) {
+    score.style.color = scoreColor(metric.score);
+  }
+  head.append(score);
+  row.append(head);
+
+  if (metric.formula) {
+    row.append(el('code', 'logic-formula', metric.formula));
+  }
+
+  if (metric.inputs.length > 0) {
+    const inputs = el('ul', 'breakdown-inputs');
+    metric.inputs.forEach((input) => {
+      const item = el('li');
+      item.append(el('span', 'input-name', input.label));
+      item.append(
+        el(
+          'span',
+          'input-value',
+          input.value === null || input.value === undefined
+            ? '—'
+            : `${fmt(input.value, Number.isInteger(input.value) ? 0 : 2)}${input.unit === '-' ? '' : input.unit}`,
+        ),
+      );
+      item.append(el('span', 'input-year', input.year ? `${input.year}年` : ''));
+      inputs.append(item);
+    });
+    row.append(inputs);
+  }
+
+  // 点数が付かなかった指標は、その観点の平均から外れる。理由を明示しないと
+  // 「値は出ているのに点数がない」状態が読み手には説明できない。
+  if (metric.score === null || metric.score === undefined) {
+    const hasValue = metric.value !== null && metric.value !== undefined;
+    row.append(
+      el(
+        'p',
+        'logic-metric-desc',
+        hasValue
+          ? '母数が足りず順位を付けられないため、この観点の平均には入っていません。'
+          : 'この指標の値が取れていないため、この観点の平均には入っていません。',
+      ),
+    );
+  }
+
+  return row;
 }
 
 // ---------------------------------------------------------------- 重み
@@ -606,6 +793,7 @@ async function loadDetail(cityCode) {
 
   renderRadar(scores, fit);
   renderHighlights(metrics, fit);
+  renderBreakdown(data.score_breakdown, fit);
   renderTimeline(data.child_projection, data.stages);
   renderPriceChart(data.price_trend);
   renderPopChart(data.stats_trend);
