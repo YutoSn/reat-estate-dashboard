@@ -1,310 +1,377 @@
+"""DuckDB へのデータ格納と、アプリ向けの集計クエリ。
+
+設計方針
+--------
+* 統計値は long 形式（municipality_code, year, indicator, value）で持つ。
+  指標を追加してもスキーマ変更が要らず、欠損もそのまま表現できる。
+* 不動産取引は種別（宅地(土地) / 宅地(土地と建物) / 中古マンション等）を必ず保持する。
+  種別を混ぜて「取引価格÷面積」を取ると、マンションの専有単価と土地単価が
+  混ざって地価として意味をなさないため。
+* 面積のマスク値（9999/8888 等の「2000㎡以上」を意味する丸め値）には
+  フラグを立て、単価系の集計から除外する。
+"""
+
+from typing import Any
+
 import duckdb
 import pandas as pd
-from typing import List, Dict, Any
+
+# 国交省APIが「一定面積以上」を丸めて返すマスク値
+MASKED_AREA_VALUES = (2000.0, 5000.0, 8888.0, 9999.0)
+
+# 住宅用の純粋な土地取引だけを指す条件
+RESIDENTIAL_LAND_FILTER = "type = '宅地(土地)' AND region = '住宅地'"
+
 
 class DuckDBManager:
-    """DuckDBを用いたデータ管理・分析クラス"""
-    
-    def __init__(self, db_path: str):
+    """アプリが使うすべての永続データを扱う。
+
+    接続はインスタンスごとに1本だけ張り、クエリのたびに ``cursor()`` を作る。
+    リクエストごとに ``duckdb.connect`` すると、同じファイルを複数の接続が
+    掴んで ``IO Error: File is already open`` になるため。
+    読み取り専用で開けば複数プロセスからの同時参照もできる。
+    """
+
+    def __init__(self, db_path: str, read_only: bool = False):
         self.db_path = db_path
-        self._init_db()
-        
-    def _init_db(self):
-        """テーブルの初期化"""
-        with duckdb.connect(self.db_path) as conn:
-            # 不動産価格用テーブル
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS land_prices (
-                    query_year INTEGER,
-                    period VARCHAR,
-                    municipality_code VARCHAR,
-                    municipality VARCHAR,
-                    district_name VARCHAR,
-                    trade_price DOUBLE,
-                    area DOUBLE,
-                    building_year VARCHAR,
-                    use_purpose VARCHAR
-                )
-            """)
-            
-            # 人口推移用テーブル
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS populations (
-                    year INTEGER,
-                    municipality_code VARCHAR,
-                    pop_total DOUBLE,
-                    pop_0_14 DOUBLE,
-                    pop_15_64 DOUBLE,
-                    pop_65_over DOUBLE
-                )
-            """)
-            
-            # 教育・子育て統計用テーブル
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS education_stats (
-                    year INTEGER,
-                    municipality_code VARCHAR,
-                    nurseries DOUBLE,
-                    elementary_schools DOUBLE,
-                    elementary_teachers DOUBLE,
-                    junior_high_schools DOUBLE,
-                    kindergartens DOUBLE,
-                    pediatricians DOUBLE,
-                    libraries DOUBLE
-                )
-            """)
+        self.read_only = read_only
+        self._conn = duckdb.connect(db_path, read_only=read_only)
+        if not read_only:
+            self._init_db()
 
-    def insert_land_prices(self, data: List[Dict[str, Any]]):
-        """不動産価格データを挿入"""
-        if not data:
-            return
-            
-        df = pd.DataFrame(data)
-        
-        cols = ['query_year', 'Period', 'MunicipalityCode', 'Municipality', 'DistrictName', 'TradePrice', 'Area', 'BuildingYear', 'Use']
-        for col in cols:
-            if col not in df.columns:
-                df[col] = None
-                
-        df['MunicipalityCode'] = df['MunicipalityCode'].astype(str).str.zfill(5)
-                
-        df = df[cols].copy()
-        df.columns = ['query_year', 'period', 'municipality_code', 'municipality', 'district_name', 'trade_price', 'area', 'building_year', 'use_purpose']
-        
-        df['trade_price'] = pd.to_numeric(df['trade_price'], errors='coerce')
-        df['area'] = pd.to_numeric(df['area'], errors='coerce')
-        
-        with duckdb.connect(self.db_path) as conn:
-            conn.execute("INSERT INTO land_prices SELECT * FROM df")
-            
-    def insert_populations(self, data: List[Dict[str, Any]]):
-        """人口データを挿入"""
-        if not data:
-            return
-            
-        records = []
-        for item in data:
-            try:
-                year_str = str(item.get('@time', ''))[:4]
-                year = int(year_str) if year_str.isdigit() else None
-                
-                area_code = str(item.get('@area', '')).zfill(5)
-                population = float(item.get('$', 0))
-                category = item.get('_category', 'A2301')
-                
-                records.append({
-                    'year': year,
-                    'municipality_code': area_code,
-                    'population': population,
-                    'category': category
-                })
-            except Exception as e:
-                continue
-                
-        df = pd.DataFrame(records)
-        
-        # Pivot the dataframe to have categories as columns
-        df_pivot = df.pivot_table(
-            index=['year', 'municipality_code'], 
-            columns='category', 
-            values='population',
-            aggfunc='first'
-        ).reset_index()
-        
-        # Rename columns to match the new schema
-        col_mapping = {
-            'A2301': 'pop_total',
-            'A1301': 'pop_0_14',
-            'A1302': 'pop_15_64',
-            'A1303': 'pop_65_over'
-        }
-        df_pivot = df_pivot.rename(columns=col_mapping)
-        
-        # Ensure all columns exist
-        for col in ['pop_total', 'pop_0_14', 'pop_15_64', 'pop_65_over']:
-            if col not in df_pivot.columns:
-                df_pivot[col] = None
-                
-        df_pivot = df_pivot[['year', 'municipality_code', 'pop_total', 'pop_0_14', 'pop_15_64', 'pop_65_over']].copy()
-        
-        with duckdb.connect(self.db_path) as conn:
-            conn.execute("INSERT INTO populations SELECT * FROM df_pivot")
+    def _query(self, sql: str, params: list[Any] | None = None) -> pd.DataFrame:
+        """読み取りクエリ。スレッドごとに独立したカーソルで実行する。"""
+        cursor = self._conn.cursor()
+        try:
+            return cursor.execute(sql, params or []).df()
+        finally:
+            cursor.close()
 
-    def insert_education_stats(self, data: List[Dict[str, Any]]):
-        """教育統計データを挿入"""
-        if not data:
-            return
-            
-        records = []
-        for item in data:
-            try:
-                year_str = str(item.get('@time', ''))[:4]
-                year = int(year_str) if year_str.isdigit() else None
-                
-                area_code = str(item.get('@area', '')).zfill(5)
-                value = float(item.get('$', 0))
-                category = item.get('_category', '')
-                
-                records.append({
-                    'year': year,
-                    'municipality_code': area_code,
-                    'value': value,
-                    'category': category
-                })
-            except Exception:
-                continue
-                
-        if not records:
-            return
+    def close(self) -> None:
+        self._conn.close()
 
-        df = pd.DataFrame(records)
-        df_pivot = df.pivot_table(
-            index=['year', 'municipality_code'], 
-            columns='category', 
-            values='value',
-            aggfunc='first'
-        ).reset_index()
-        
-        col_mapping = {
-            'J2506': 'nurseries',
-            'I5101': 'elementary_schools',
-            'I510110': 'elementary_teachers',
-            'I5102': 'junior_high_schools',
-            'I5103': 'kindergartens',
-            'J4403': 'pediatricians',
-            'I6100': 'libraries'
-        }
-        df_pivot = df_pivot.rename(columns=col_mapping)
-        
-        expected_cols = list(col_mapping.values())
-        for col in expected_cols:
-            if col not in df_pivot.columns:
-                df_pivot[col] = None
-                
-        df_pivot = df_pivot[['year', 'municipality_code'] + expected_cols].copy()
-        
-        with duckdb.connect(self.db_path) as conn:
-            conn.execute("INSERT INTO education_stats SELECT * FROM df_pivot")
-
-    def get_all_integrated_trends(self) -> pd.DataFrame:
-        """全市区町村の地価推移と人口推移を統合して取得 (従来機能用)"""
-        query = """
-            WITH price_trend AS (
-                SELECT 
-                    query_year as year, 
-                    municipality_code,
-                    ANY_VALUE(municipality) as municipality_name,
-                    AVG(trade_price / NULLIF(area, 0)) as avg_price_per_sqm, 
-                    COUNT(*) as transaction_count
-                FROM land_prices
-                WHERE trade_price IS NOT NULL AND area IS NOT NULL
-                GROUP BY query_year, municipality_code
+    # ------------------------------------------------------------------ 初期化
+    def _init_db(self) -> None:
+        conn = self._conn
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS municipalities (
+                municipality_code VARCHAR PRIMARY KEY,
+                prefecture_code   VARCHAR,
+                prefecture_name   VARCHAR,
+                municipality_name VARCHAR,
+                full_name         VARCHAR
             )
-            SELECT 
-                COALESCE(p.year, pop.year) as year,
-                COALESCE(p.municipality_code, pop.municipality_code) as municipality_code,
-                p.municipality_name,
-                p.avg_price_per_sqm,
-                p.transaction_count,
-                pop.pop_total as population
-            FROM price_trend p
-            FULL OUTER JOIN populations pop 
-                ON p.year = pop.year AND p.municipality_code = pop.municipality_code
-            WHERE p.municipality_name IS NOT NULL
-            ORDER BY municipality_code, year
-        """
-        with duckdb.connect(self.db_path) as conn:
-            return conn.execute(query).df()
-
-    def get_district_trend(self, city_code: str, district_name: str) -> pd.DataFrame:
-        """指定された地区（町丁・大字）の20年間の地価推移と、所属市区町村の人口推移を取得"""
-        query = """
-            WITH price_trend AS (
-                SELECT 
-                    query_year as year, 
-                    AVG(trade_price / NULLIF(area, 0)) as avg_price_per_sqm, 
-                    COUNT(*) as transaction_count
-                FROM land_prices
-                WHERE municipality_code = ? 
-                  AND district_name LIKE ?
-                  AND trade_price IS NOT NULL 
-                  AND area IS NOT NULL
-                GROUP BY query_year
-            ),
-            pop_trend AS (
-                SELECT year, pop_total as population, pop_0_14, pop_15_64, pop_65_over
-                FROM populations
-                WHERE municipality_code = ?
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS municipality_stats (
+                municipality_code VARCHAR,
+                year              INTEGER,
+                indicator         VARCHAR,
+                value             DOUBLE
             )
-            SELECT 
-                COALESCE(p.year, pop.year) as year,
-                p.avg_price_per_sqm,
-                p.transaction_count,
-                pop.population,
-                pop.pop_0_14,
-                pop.pop_15_64,
-                pop.pop_65_over
-            FROM price_trend p
-            FULL OUTER JOIN pop_trend pop ON p.year = pop.year
-            WHERE COALESCE(p.year, pop.year) IS NOT NULL
-            ORDER BY year
-        """
-        import re
-        # XPT001の「丸の内１丁目」のような文字列から、「１丁目」などを除去して前方一致検索する
-        base_name = re.sub(r'[0-9０-９]+丁目.*$', '', district_name)
-        search_pattern = f"{base_name}%"
-        
-        with duckdb.connect(self.db_path) as conn:
-            # DuckDBのプリペアドステートメントで実行
-            # city_code を2回、search_pattern を1回渡す
-            return conn.execute(query, [city_code, search_pattern, city_code]).df()
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS land_prices (
+                trade_year        INTEGER,
+                quarter           INTEGER,
+                period            VARCHAR,
+                type              VARCHAR,
+                region            VARCHAR,
+                municipality_code VARCHAR,
+                prefecture        VARCHAR,
+                municipality      VARCHAR,
+                district_name     VARCHAR,
+                district_code     VARCHAR,
+                trade_price       DOUBLE,
+                unit_price        DOUBLE,
+                price_per_tsubo   DOUBLE,
+                area              DOUBLE,
+                area_is_masked    BOOLEAN,
+                total_floor_area  DOUBLE,
+                building_year     INTEGER,
+                structure         VARCHAR,
+                use_purpose       VARCHAR,
+                purpose           VARCHAR,
+                city_planning     VARCHAR,
+                coverage_ratio    DOUBLE,
+                floor_area_ratio  DOUBLE,
+                frontage          DOUBLE,
+                land_shape        VARCHAR,
+                renovation        VARCHAR
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS municipality_scores (
+                municipality_code VARCHAR,
+                metric            VARCHAR,
+                value             DOUBLE
+            )
+            """
+        )
 
-    def get_cities(self, pref_code: str) -> List[Dict[str, str]]:
-        """指定された都道府県の市区町村一覧を取得"""
+    # ------------------------------------------------------------------ 書き込み
+    def replace_municipalities(self, df: pd.DataFrame) -> None:
+        self._conn.execute("DELETE FROM municipalities")
+        self._conn.register("df_municipalities", df)
+        self._conn.execute(
+            "INSERT INTO municipalities SELECT municipality_code, prefecture_code,"
+            " prefecture_name, municipality_name, full_name FROM df_municipalities"
+        )
+
+    def replace_stats(self, df: pd.DataFrame) -> None:
+        self._conn.execute("DELETE FROM municipality_stats")
+        self._conn.register("df_stats", df)
+        self._conn.execute(
+            "INSERT INTO municipality_stats SELECT municipality_code, year,"
+            " indicator, value FROM df_stats"
+        )
+
+    def replace_land_prices(self, df: pd.DataFrame) -> None:
+        self._conn.execute("DELETE FROM land_prices")
+        self._append_land_prices(self._conn, df)
+
+    def append_land_prices(self, df: pd.DataFrame) -> None:
+        self._append_land_prices(self._conn, df)
+
+    def clear_land_prices(self) -> None:
+        self._conn.execute("DELETE FROM land_prices")
+
+    @staticmethod
+    def _append_land_prices(conn, df: pd.DataFrame) -> None:
+        columns = [
+            "trade_year", "quarter", "period", "type", "region",
+            "municipality_code", "prefecture", "municipality", "district_name",
+            "district_code", "trade_price", "unit_price", "price_per_tsubo",
+            "area", "area_is_masked", "total_floor_area", "building_year",
+            "structure", "use_purpose", "purpose", "city_planning",
+            "coverage_ratio", "floor_area_ratio", "frontage", "land_shape",
+            "renovation",
+        ]
+        conn.register("df_land", df[columns])
+        conn.execute(f"INSERT INTO land_prices SELECT {', '.join(columns)} FROM df_land")
+
+    def replace_scores(self, df: pd.DataFrame) -> None:
+        self._conn.execute("DELETE FROM municipality_scores")
+        self._conn.register("df_scores", df)
+        self._conn.execute(
+            "INSERT INTO municipality_scores SELECT municipality_code, metric,"
+            " value FROM df_scores"
+        )
+
+    # ------------------------------------------------------------------ 読み出し
+    def get_prefectures(self) -> list[dict[str, str]]:
         query = """
-            SELECT DISTINCT municipality_code, municipality
-            FROM land_prices
-            WHERE SUBSTRING(municipality_code, 1, 2) = ?
-              AND municipality IS NOT NULL
+            SELECT DISTINCT prefecture_code AS code, prefecture_name AS name
+            FROM municipalities
+            WHERE prefecture_name IS NOT NULL
+            ORDER BY prefecture_code
+        """
+        return self._query(query).to_dict("records")
+
+    def get_cities(self, pref_code: str) -> list[dict[str, str]]:
+        query = """
+            SELECT municipality_code, municipality_name AS municipality
+            FROM municipalities
+            WHERE prefecture_code = ?
             ORDER BY municipality_code
         """
-        with duckdb.connect(self.db_path) as conn:
-            df = conn.execute(query, [pref_code]).df()
-            return df.to_dict('records')
+        return self._query(query, [pref_code]).to_dict("records")
 
-    def get_districts(self, city_code: str) -> List[str]:
-        """指定された市区町村の地区一覧を取得"""
+    def get_cities_all(self) -> list[dict[str, str]]:
+        """対象全都県の市区町村一覧。"""
         query = """
-            SELECT DISTINCT district_name
+            SELECT municipality_code, municipality_name AS municipality,
+                   prefecture_code, prefecture_name
+            FROM municipalities
+            ORDER BY municipality_code
+        """
+        return self._query(query).to_dict("records")
+
+    def get_districts(self, city_code: str) -> list[dict[str, Any]]:
+        """地区一覧。住宅地の土地取引が多い順に、件数付きで返す。"""
+        query = f"""
+            SELECT
+                district_name,
+                COUNT(*) FILTER (WHERE {RESIDENTIAL_LAND_FILTER}) AS land_deals,
+                COUNT(*) AS total_deals
             FROM land_prices
-            WHERE municipality_code = ?
-              AND district_name IS NOT NULL
-            ORDER BY district_name
+            WHERE municipality_code = ? AND district_name IS NOT NULL
+              AND district_name <> ''
+            GROUP BY district_name
+            ORDER BY land_deals DESC, total_deals DESC, district_name
         """
-        with duckdb.connect(self.db_path) as conn:
-            df = conn.execute(query, [city_code]).df()
-            return df['district_name'].tolist()
+        return self._query(query, [city_code]).to_dict("records")
 
-    def get_education_trend(self, city_code: str) -> pd.DataFrame:
-        """指定された市区町村の教育・子育て関連指標の推移を取得"""
+    def get_stats(self, city_code: str) -> pd.DataFrame:
+        """指定市区町村の統計値を year×indicator のワイド表で返す。"""
         query = """
-            SELECT 
-                COALESCE(e.year, pop.year) as year,
-                COALESCE(e.municipality_code, pop.municipality_code) as municipality_code,
-                pop.pop_total as population,
-                pop.pop_0_14,
-                e.nurseries,
-                e.elementary_schools,
-                e.elementary_teachers,
-                e.junior_high_schools,
-                e.kindergartens,
-                e.pediatricians,
-                e.libraries
-            FROM populations pop
-            FULL OUTER JOIN education_stats e 
-                ON pop.year = e.year AND pop.municipality_code = e.municipality_code
-            WHERE COALESCE(e.municipality_code, pop.municipality_code) = ?
-            ORDER BY year
+            SELECT year, indicator, value
+            FROM municipality_stats
+            WHERE municipality_code = ?
         """
-        with duckdb.connect(self.db_path) as conn:
-            return conn.execute(query, [city_code]).df()
+        df = self._query(query, [city_code])
+        if df.empty:
+            return pd.DataFrame()
+        return df.pivot_table(
+            index="year", columns="indicator", values="value", aggfunc="first"
+        ).sort_index()
+
+    def get_stats_for_many(self, city_codes: list[str]) -> pd.DataFrame:
+        """複数市区町村の統計値を long 形式で返す（スコア計算用）。"""
+        if not city_codes:
+            return pd.DataFrame(
+                columns=["municipality_code", "year", "indicator", "value"]
+            )
+        placeholders = ", ".join("?" for _ in city_codes)
+        query = f"""
+            SELECT municipality_code, year, indicator, value
+            FROM municipality_stats
+            WHERE municipality_code IN ({placeholders})
+        """
+        return self._query(query, city_codes)
+
+    def get_all_stats(self) -> pd.DataFrame:
+        query = """
+            SELECT municipality_code, year, indicator, value
+            FROM municipality_stats
+        """
+        return self._query(query)
+
+    # ------------------------------------------------------- 不動産価格の集計
+    def get_price_trend(
+        self, city_code: str, district_name: str | None = None
+    ) -> pd.DataFrame:
+        """住宅地の土地単価と戸建価格の推移。
+
+        単価は外れ値に強い中央値を使う。極端に高額な一件（例: 170億円の取引）で
+        平均が跳ねるのを避けるため。
+        """
+        district_clause = ""
+        params: list[Any] = [city_code]
+        if district_name:
+            district_clause = "AND district_name = ?"
+            params.append(district_name)
+
+        query = f"""
+            WITH base AS (
+                SELECT * FROM land_prices
+                WHERE municipality_code = ? {district_clause}
+            )
+            SELECT
+                trade_year AS year,
+                MEDIAN(unit_price) FILTER (
+                    WHERE {RESIDENTIAL_LAND_FILTER} AND NOT area_is_masked
+                      AND unit_price IS NOT NULL
+                ) AS land_unit_price,
+                COUNT(*) FILTER (
+                    WHERE {RESIDENTIAL_LAND_FILTER} AND NOT area_is_masked
+                      AND unit_price IS NOT NULL
+                ) AS land_deals,
+                MEDIAN(trade_price) FILTER (
+                    WHERE type = '宅地(土地と建物)' AND region = '住宅地'
+                      AND NOT area_is_masked
+                ) AS house_price,
+                COUNT(*) FILTER (
+                    WHERE type = '宅地(土地と建物)' AND region = '住宅地'
+                      AND NOT area_is_masked
+                ) AS house_deals,
+                MEDIAN(area) FILTER (
+                    WHERE {RESIDENTIAL_LAND_FILTER} AND NOT area_is_masked
+                ) AS land_area,
+                MEDIAN(trade_price) FILTER (WHERE type = '中古マンション等') AS condo_price,
+                COUNT(*) FILTER (WHERE type = '中古マンション等') AS condo_deals
+            FROM base
+            GROUP BY trade_year
+            ORDER BY trade_year
+        """
+        return self._query(query, params)
+
+    def get_latest_land_price_by_city(self, years: int = 3) -> pd.DataFrame:
+        """市区町村ごとの直近数年の住宅地単価中央値（比較・スコア用）。"""
+        query = f"""
+            WITH latest AS (SELECT MAX(trade_year) AS y FROM land_prices)
+            SELECT
+                municipality_code,
+                MEDIAN(unit_price) AS land_unit_price,
+                COUNT(*) AS deals
+            FROM land_prices, latest
+            WHERE {RESIDENTIAL_LAND_FILTER}
+              AND NOT area_is_masked
+              AND unit_price IS NOT NULL
+              AND trade_year > latest.y - ?
+            GROUP BY municipality_code
+        """
+        return self._query(query, [years])
+
+    def get_price_history_by_city(self) -> pd.DataFrame:
+        """全市区町村×年の住宅地単価中央値（変化率の算出用）。"""
+        query = f"""
+            SELECT
+                municipality_code,
+                trade_year AS year,
+                MEDIAN(unit_price) AS land_unit_price,
+                COUNT(*) AS deals
+            FROM land_prices
+            WHERE {RESIDENTIAL_LAND_FILTER}
+              AND NOT area_is_masked
+              AND unit_price IS NOT NULL
+            GROUP BY municipality_code, trade_year
+        """
+        return self._query(query)
+
+    def get_district_summary(self, city_code: str, min_deals: int = 5) -> pd.DataFrame:
+        """市区町村内の地区別サマリ（直近10年の住宅地単価と件数）。"""
+        query = f"""
+            WITH latest AS (SELECT MAX(trade_year) AS y FROM land_prices)
+            SELECT
+                district_name,
+                MEDIAN(unit_price) AS land_unit_price,
+                COUNT(*) AS deals,
+                MEDIAN(area) AS median_area
+            FROM land_prices, latest
+            WHERE municipality_code = ?
+              AND {RESIDENTIAL_LAND_FILTER}
+              AND NOT area_is_masked
+              AND unit_price IS NOT NULL
+              AND trade_year > latest.y - 10
+            GROUP BY district_name
+            HAVING COUNT(*) >= ?
+            ORDER BY land_unit_price DESC
+        """
+        return self._query(query, [city_code, min_deals])
+
+    def get_scores(self) -> pd.DataFrame:
+        query = """
+            SELECT s.municipality_code, s.metric, s.value,
+                   m.municipality_name, m.prefecture_code, m.prefecture_name
+            FROM municipality_scores s
+            LEFT JOIN municipalities m USING (municipality_code)
+        """
+        return self._query(query)
+
+    def get_municipality(self, city_code: str) -> dict[str, Any] | None:
+        query = "SELECT * FROM municipalities WHERE municipality_code = ?"
+        df = self._query(query, [city_code])
+        return df.to_dict("records")[0] if not df.empty else None
+
+    def get_covered_city_codes(self) -> list[str]:
+        """不動産取引データが存在する市区町村コード一覧。"""
+        query = "SELECT DISTINCT municipality_code FROM land_prices ORDER BY 1"
+        return self._query(query)["municipality_code"].tolist()
+
+    def table_counts(self) -> dict[str, int]:
+        tables = [
+            "municipalities", "municipality_stats", "land_prices",
+            "municipality_scores",
+        ]
+        return {
+            table: int(self._query(f"SELECT COUNT(*) AS n FROM {table}")["n"][0])
+            for table in tables
+        }

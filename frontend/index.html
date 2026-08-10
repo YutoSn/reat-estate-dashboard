@@ -1,130 +1,245 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>不動産・地域データ ダッシュボード</title>
-    <link rel="manifest" href="/manifest.json">
-    <meta name="theme-color" content="#0f172a">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <link rel="apple-touch-icon" href="/icon.svg">
-    <link rel="stylesheet" href="./style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=Noto+Sans+JP:wght@400;600;800&display=swap" rel="stylesheet">
-    <!-- Leaflet CSS & JS for Map -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet.vectorgrid@1.3.0/dist/Leaflet.VectorGrid.bundled.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#1f6f5c" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="manifest" href="/manifest.json" />
+  <title>住まい選びダッシュボード</title>
 </head>
 <body>
-    <nav class="glass-nav">
-        <div class="nav-brand">Real Estate Dashboard</div>
-        <div class="nav-links">
-            <a href="index.html" class="active">ダッシュボード (地価・人口)</a>
-            <a href="hazard.html">重ねるハザードマップ</a>
-            <a href="education.html">教育・子育て分析</a>
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">🏡</span>
+        <div>
+          <h1>住まい選びダッシュボード</h1>
+          <p class="brand-sub">子どもの成長を軸に、家を建てる場所を見極める</p>
         </div>
-    </nav>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button class="tab is-active" data-view="explore" role="tab">探す</button>
+        <button class="tab" data-view="detail" role="tab">詳しく見る</button>
+        <button class="tab" data-view="compare" role="tab">比べる</button>
+        <button class="tab" data-view="hazard" role="tab">災害リスク</button>
+      </nav>
+    </div>
+  </header>
 
-    <main class="dashboard-container">
-        <!-- 左サイド：マップ・コントロールエリア -->
-        <div class="left-panel glass-panel">
-            <header class="header">
-                <h1>エリア動態分析</h1>
-                <p>地図上のピン（取引地点）をクリックして、そのエリア（町丁）の過去20年間の地価・人口トレンドを分析します。</p>
-                
-                <div class="control-header">
-                    <div class="dropdown-controls" style="display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px;">
-                        <select id="pref-select" class="custom-select">
-                            <option value="">都道府県を選択</option>
-                        </select>
-                        <select id="city-select" class="custom-select" disabled>
-                            <option value="">市区町村を選択</option>
-                        </select>
-                        <select id="district-select" class="custom-select" disabled>
-                            <option value="">エリアを選択</option>
-                        </select>
-                        <button id="add-area-btn" class="primary-button" disabled>追加</button>
-                    </div>
-                    <label>比較するエリア (最大10個):</label>
-                    <button id="reset-btn" class="reset-button">クリア</button>
-                </div>
-                
-                <div class="layer-controls" style="margin-bottom: 15px; padding: 10px; background: rgba(255,255,255,0.05); border-radius: 8px;">
-                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                        <input type="checkbox" id="toggle-mlit-tiles" style="width: 16px; height: 16px;">
-                        <strong>成約価格等マップ（国交省 XPT001 レイヤー）</strong>を表示
-                    </label>
-                </div>
-                
-                <!-- 選択されたエリアのリスト表示 -->
-                <div id="selected-areas-list" class="selected-areas-list"></div>
-            </header>
-            
-            <div id="interactive-map" class="interactive-map"></div>
-            <p class="select-hint">※ドロップダウンからエリアを追加すると、マップ上にピンが表示され推移を確認できます。</p>
+  <main class="app-main">
+    <!-- ============================== 探す ============================== -->
+    <section class="view is-active" id="view-explore">
+      <div class="timeline-banner" id="timeline-banner"></div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>何を重視しますか</h2>
+          <button class="btn-ghost" id="reset-weights">初期値に戻す</button>
+        </div>
+        <p class="panel-note">
+          重みを変えると総合点が計算し直されます。家庭ごとに優先順位は違うので、
+          ひとつの「正解」は用意していません。
+        </p>
+        <div class="weights" id="weights"></div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>ランキング</h2>
+          <div class="filter-row">
+            <select id="rank-pref" class="select">
+              <option value="">すべての都県</option>
+            </select>
+            <select id="rank-size" class="select">
+              <option value="0">人口を問わない</option>
+              <option value="30000">3万人以上</option>
+              <option value="100000">10万人以上</option>
+              <option value="200000">20万人以上</option>
+            </select>
+          </div>
+        </div>
+        <p class="panel-note">
+          人口が少ない町村は「子ども1000人あたりの保育所数」が構造的に高く出ます。
+          その分、医師の密度や将来人口では不利になりやすいので、規模でも絞り込んでください。
+        </p>
+        <div class="table-scroll">
+          <table class="data-table" id="ranking-table">
+            <thead>
+              <tr>
+                <th class="col-rank">#</th>
+                <th>市区町村</th>
+                <th class="num">総合</th>
+                <th class="num">子育て</th>
+                <th class="num">医療</th>
+                <th class="num">将来性</th>
+                <th class="num">住環境</th>
+                <th class="num">価格</th>
+                <th class="num">土地単価</th>
+                <th class="num">2050年</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <p class="empty-note" id="ranking-empty" hidden>データがありません。</p>
+      </div>
+    </section>
+
+    <!-- ========================== 詳しく見る ========================== -->
+    <section class="view" id="view-detail">
+      <div class="panel">
+        <div class="selector-row">
+          <label class="field">
+            <span>都県</span>
+            <select id="detail-pref" class="select"></select>
+          </label>
+          <label class="field">
+            <span>市区町村</span>
+            <select id="detail-city" class="select"></select>
+          </label>
+        </div>
+      </div>
+
+      <div id="detail-body" hidden>
+        <div class="panel hero-panel">
+          <div class="hero-head">
+            <div>
+              <h2 id="detail-name">—</h2>
+              <p class="hero-sub" id="detail-sub">—</p>
+            </div>
+            <div class="hero-score">
+              <span class="score-value" id="detail-composite">—</span>
+              <span class="score-label">総合スコア</span>
+            </div>
+          </div>
+          <div class="hero-grid">
+            <div class="chart-box">
+              <canvas id="radar-chart"></canvas>
+            </div>
+            <div class="highlight-list" id="detail-highlights"></div>
+          </div>
         </div>
 
-        <!-- 右サイド：グラフエリア -->
-        <div class="charts-grid">
-            <div class="chart-card glass-panel">
-                <div class="chart-header">
-                    <h2>平均地価推移 (円/㎡)</h2>
-                    <span class="badge">Price Trend</span>
-                </div>
-                <div class="chart-wrapper">
-                    <canvas id="priceChart"></canvas>
-                </div>
-            </div>
-            
-            <div class="chart-card glass-panel">
-                <div class="chart-header">
-                    <h2>総人口推移 (人)</h2>
-                    <span class="badge">Population Trend</span>
-                </div>
-                <div class="chart-wrapper">
-                    <canvas id="popChart"></canvas>
-                </div>
-            </div>
+        <div class="panel">
+          <h2>子どもの成長と、その時この街の同年代は何人か</h2>
+          <p class="panel-note">
+            0〜5歳人口を出発点に、過去の実績から求めたコホート残存率を掛けて推計しています。
+            残存率が1を超える街は、子育て世帯が転入してくる街です。
+          </p>
+          <div class="timeline" id="detail-timeline"></div>
         </div>
 
-        <!-- 街の特性・スコア評価エリア -->
-        <div class="glass-panel" style="margin-top: 2rem;">
-            <div class="header" style="margin-bottom: 1.5rem;">
-                <h1>街の特性スコア（総合評価）</h1>
-                <p>現在の人口構成や直近の取引動向から算出した、エリアの利便性・子育て環境・将来性スコアです。</p>
-            </div>
-            <div class="charts-grid" style="grid-template-columns: 1fr 2fr;">
-                <!-- レーダーチャート（総合評価） -->
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h2>総合特性スコア</h2>
-                        <span class="badge">Radar</span>
-                    </div>
-                    <div class="chart-wrapper">
-                        <canvas id="scoreRadarChart"></canvas>
-                    </div>
-                </div>
-                
-                <!-- 新規スコア推移ラインチャート群（タブ切替または縦積み） -->
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h2>各指標の推移</h2>
-                        <span class="badge">Score Trends</span>
-                    </div>
-                    <div class="chart-wrapper">
-                        <canvas id="scoreTrendChart"></canvas>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- 各エリアの詳細スコア表示エリア -->
-            <div id="score-details-container" style="margin-top: 1.5rem; display: flex; flex-direction: column; gap: 1rem;">
-                <!-- JavaScriptから動的にスコア詳細カードを追加 -->
-            </div>
+        <div class="panel">
+          <h2>価格の推移</h2>
+          <p class="panel-note">
+            住宅地の <strong>土地のみ</strong> の取引から求めた㎡単価の中央値です。
+            マンションや建物付き取引は単価の意味が変わるため分けて集計しています。
+          </p>
+          <div class="chart-box tall">
+            <canvas id="price-chart"></canvas>
+          </div>
         </div>
-    </main>
 
-    <script type="module" src="./main.js"></script>
+        <div class="panel">
+          <h2>人口の推移</h2>
+          <div class="chart-box tall">
+            <canvas id="pop-chart"></canvas>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>地区別の土地単価</h2>
+            <span class="panel-hint">直近10年・取引5件以上</span>
+          </div>
+          <div class="table-scroll">
+            <table class="data-table" id="district-table">
+              <thead>
+                <tr>
+                  <th>地区</th>
+                  <th class="num">㎡単価</th>
+                  <th class="num">中央値面積</th>
+                  <th class="num">取引件数</th>
+                </tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>指標の実数</h2>
+            <span class="panel-hint">かっこ内は観測年</span>
+          </div>
+          <div class="metric-grid" id="detail-metrics"></div>
+        </div>
+      </div>
+
+      <p class="empty-note" id="detail-empty">市区町村を選んでください。</p>
+    </section>
+
+    <!-- ============================= 比べる ============================= -->
+    <section class="view" id="view-compare">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>比較する市区町村</h2>
+          <span class="panel-hint">最大6件</span>
+        </div>
+        <div class="selector-row">
+          <label class="field">
+            <span>都県</span>
+            <select id="compare-pref" class="select"></select>
+          </label>
+          <label class="field">
+            <span>市区町村</span>
+            <select id="compare-city" class="select"></select>
+          </label>
+          <button class="btn" id="compare-add">追加</button>
+        </div>
+        <div class="chip-row" id="compare-chips"></div>
+      </div>
+
+      <div class="panel" id="compare-result" hidden>
+        <div class="chart-box tall">
+          <canvas id="compare-radar"></canvas>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="compare-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================== 災害リスク ========================== -->
+    <section class="view" id="view-hazard">
+      <div class="panel">
+        <h2>災害リスクを重ねて見る</h2>
+        <p class="panel-note">
+          家を建てる土地は、統計だけでは決められません。洪水・土砂・津波の想定区域と
+          地形分類を重ねて、候補地そのものを確認してください。
+        </p>
+      </div>
+      <div class="map-wrap">
+        <div id="map"></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="app-footer">
+    <p>
+      出典: e-Stat 社会・人口統計体系（総務省）／ 不動産情報ライブラリ（国土交通省）／
+      重ねるハザードマップ（国土地理院）
+    </p>
+    <p class="footer-note">
+      スコアは対象8都県の中での相対順位です。数値は公的統計の引用であり、
+      特定の物件や投資判断を推奨するものではありません。
+    </p>
+  </footer>
+
+  <script type="module" src="/main.js"></script>
 </body>
 </html>

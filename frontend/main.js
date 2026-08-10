@@ -1,687 +1,743 @@
+import './style.css';
 import Chart from 'chart.js/auto';
 
-// グローバル変数
-let priceChartInstance = null;
-let popChartInstance = null;
-let selectedAreas = []; // { id, city_code, district_name, marker }
-let map = null;
-let markerLayer = null;
-let mlitTileLayer = null;
-let scoreRadarChartInstance = null;
-let scoreTrendChartInstance = null;
+// ---------------------------------------------------------------- 状態
+const state = {
+  meta: null,
+  weights: {},
+  ranking: [],
+  prefectures: [],
+  compareCodes: [],
+  charts: {},
+};
 
-const COLORS = [
-    { border: '#3b82f6', bg: 'rgba(59, 130, 246, 0.1)' },
-    { border: '#ef4444', bg: 'rgba(239, 68, 68, 0.1)' },
-    { border: '#10b981', bg: 'rgba(16, 185, 129, 0.1)' },
-    { border: '#f59e0b', bg: 'rgba(245, 158, 11, 0.1)' },
-    { border: '#8b5cf6', bg: 'rgba(139, 92, 246, 0.1)' },
-    { border: '#ec4899', bg: 'rgba(236, 72, 153, 0.1)' },
-    { border: '#06b6d4', bg: 'rgba(6, 182, 212, 0.1)' },
-    { border: '#84cc16', bg: 'rgba(132, 204, 22, 0.1)' },
-    { border: '#f97316', bg: 'rgba(249, 115, 22, 0.1)' },
-    { border: '#64748b', bg: 'rgba(100, 116, 139, 0.1)' }
-];
+const DIMENSION_ORDER = ['childcare', 'medical', 'future', 'living', 'affordability'];
 
-// 初期化
-function init() {
-    initMap();
-    initDropdowns(); // ドロップダウンの初期化
-    updateCharts(); // 空のグラフを描画
+const PALETTE = ['#1f6f5c', '#c96f3f', '#4a6fa5', '#8a5a83', '#5c8a4a', '#a5504a'];
 
-    document.getElementById('reset-btn').addEventListener('click', clearAll);
-    
-    // ドロップダウンのイベントリスナー
-    document.getElementById('pref-select').addEventListener('change', onPrefChange);
-    document.getElementById('city-select').addEventListener('change', onCityChange);
-    document.getElementById('district-select').addEventListener('change', onDistrictChange);
-    document.getElementById('add-area-btn').addEventListener('click', onAddAreaClick);
+// ---------------------------------------------------------------- ユーティリティ
+const api = async (path) => {
+  const res = await fetch(path);
+  if (!res.ok) throw new Error(`${path} -> ${res.status}`);
+  return res.json();
+};
+
+const fmt = (value, digits = 0) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  return Number(value).toLocaleString('ja-JP', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+};
+
+const fmtYen = (value) => (value === null || value === undefined ? '—' : `${fmt(value)}円`);
+
+const fmtSigned = (value, digits = 1) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '—';
+  const sign = value > 0 ? '+' : '';
+  return `${sign}${fmt(value, digits)}`;
+};
+
+const el = (tag, className, text) => {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined) node.textContent = text;
+  return node;
+};
+
+const destroyChart = (key) => {
+  if (state.charts[key]) {
+    state.charts[key].destroy();
+    delete state.charts[key];
+  }
+};
+
+// ---------------------------------------------------------------- 初期化
+async function init() {
+  setupTabs();
+
+  const [meta, prefectures] = await Promise.all([
+    api('/api/meta'),
+    api('/api/prefectures'),
+  ]);
+  state.meta = meta;
+  state.prefectures = prefectures;
+
+  meta.dimensions.forEach((dim) => {
+    state.weights[dim.key] = dim.default_weight;
+  });
+
+  renderTimelineBanner();
+  renderWeightControls();
+  fillPrefectureSelects();
+
+  document.getElementById('reset-weights').addEventListener('click', () => {
+    state.meta.dimensions.forEach((dim) => {
+      state.weights[dim.key] = dim.default_weight;
+    });
+    renderWeightControls();
+    renderRanking();
+  });
+
+  document.getElementById('rank-pref').addEventListener('change', loadRanking);
+  document.getElementById('rank-size').addEventListener('change', renderRanking);
+  await loadRanking();
+
+  setupDetailView();
+  setupCompareView();
 }
 
-// ドロップダウン関連の関数
-async function initDropdowns() {
-    try {
-        const res = await fetch('/api/prefectures');
-        const prefectures = await res.json();
-        const prefSelect = document.getElementById('pref-select');
-        prefectures.forEach(pref => {
-            const option = document.createElement('option');
-            option.value = pref.code;
-            option.textContent = pref.name;
-            prefSelect.appendChild(option);
-        });
-    } catch (err) {
-        console.error("都道府県の取得に失敗しました", err);
-    }
+function setupTabs() {
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((t) => t.classList.remove('is-active'));
+      document.querySelectorAll('.view').forEach((v) => v.classList.remove('is-active'));
+      tab.classList.add('is-active');
+      document.getElementById(`view-${tab.dataset.view}`).classList.add('is-active');
+      if (tab.dataset.view === 'hazard') ensureHazardMap();
+    });
+  });
 }
 
-async function onPrefChange(e) {
-    const prefCode = e.target.value;
-    const citySelect = document.getElementById('city-select');
-    const districtSelect = document.getElementById('district-select');
-    const addBtn = document.getElementById('add-area-btn');
-    
-    citySelect.innerHTML = '<option value="">市区町村を選択</option>';
-    districtSelect.innerHTML = '<option value="">エリアを選択</option>';
-    citySelect.disabled = true;
-    districtSelect.disabled = true;
-    addBtn.disabled = true;
+function renderTimelineBanner() {
+  const banner = document.getElementById('timeline-banner');
+  banner.innerHTML = '';
+  const intro = el('div', 'banner-intro');
+  intro.append(el('strong', null, '今のお子さんが小さいうちに決める、これからの15年'));
+  intro.append(
+    el(
+      'p',
+      null,
+      '家を建てる判断は「今の便利さ」より「子どもが学校に通う頃どうなっているか」で決まります。',
+    ),
+  );
+  banner.append(intro);
 
-    if (!prefCode) return;
-
-    try {
-        const res = await fetch(`/api/cities/${prefCode}`);
-        const cities = await res.json();
-        cities.forEach(city => {
-            const option = document.createElement('option');
-            option.value = city.municipality_code;
-            option.textContent = city.municipality;
-            citySelect.appendChild(option);
-        });
-        citySelect.disabled = false;
-    } catch (err) {
-        console.error("市区町村の取得に失敗しました", err);
-    }
+  const row = el('div', 'banner-stages');
+  state.meta.stages.forEach((stage) => {
+    const card = el('div', 'stage-card');
+    card.append(el('span', 'stage-label', stage.label));
+    card.append(el('span', 'stage-year', `${stage.start_year}〜${stage.end_year}年`));
+    card.append(el('span', 'stage-age', `${stage.start_age}〜${stage.end_age}歳`));
+    row.append(card);
+  });
+  banner.append(row);
 }
 
-async function onCityChange(e) {
-    const cityCode = e.target.value;
-    const districtSelect = document.getElementById('district-select');
-    const addBtn = document.getElementById('add-area-btn');
-    
-    districtSelect.innerHTML = '<option value="">エリアを選択</option>';
-    districtSelect.disabled = true;
-    addBtn.disabled = true;
+// ---------------------------------------------------------------- 重み
+function renderWeightControls() {
+  const container = document.getElementById('weights');
+  container.innerHTML = '';
 
-    if (!cityCode) return;
+  state.meta.dimensions.forEach((dim) => {
+    const wrap = el('div', 'weight-item');
+    const head = el('div', 'weight-head');
+    head.append(el('span', 'weight-label', dim.label));
+    const pct = el('span', 'weight-value', `${Math.round(state.weights[dim.key] * 100)}%`);
+    head.append(pct);
+    wrap.append(head);
 
-    try {
-        const res = await fetch(`/api/districts/${cityCode}`);
-        const districts = await res.json();
-        districts.forEach(district => {
-            const option = document.createElement('option');
-            option.value = district;
-            option.textContent = district;
-            districtSelect.appendChild(option);
-        });
-        districtSelect.disabled = false;
-    } catch (err) {
-        console.error("エリアの取得に失敗しました", err);
-    }
+    const input = document.createElement('input');
+    input.type = 'range';
+    input.min = '0';
+    input.max = '50';
+    input.step = '5';
+    input.value = String(Math.round(state.weights[dim.key] * 100));
+    input.addEventListener('input', () => {
+      state.weights[dim.key] = Number(input.value) / 100;
+      pct.textContent = `${input.value}%`;
+      renderRanking();
+    });
+    wrap.append(input);
+    wrap.append(el('p', 'weight-desc', dim.description));
+    container.append(wrap);
+  });
 }
 
-function onDistrictChange(e) {
-    const addBtn = document.getElementById('add-area-btn');
-    addBtn.disabled = !e.target.value;
+function computeComposite(row) {
+  let total = 0;
+  let weightSum = 0;
+  DIMENSION_ORDER.forEach((key) => {
+    const value = row[`dim_${key}`];
+    const weight = state.weights[key] ?? 0;
+    if (value === null || value === undefined || weight <= 0) return;
+    total += value * weight;
+    weightSum += weight;
+  });
+  return weightSum > 0 ? total / weightSum : null;
 }
 
-async function onAddAreaClick() {
-    const prefSelect = document.getElementById('pref-select');
-    const citySelect = document.getElementById('city-select');
-    const districtSelect = document.getElementById('district-select');
-    
-    const prefName = prefSelect.options[prefSelect.selectedIndex].text;
-    const cityCode = citySelect.value;
-    const cityName = citySelect.options[citySelect.selectedIndex].text;
-    const districtName = districtSelect.value;
-    
-    if (!cityCode || !districtName) return;
-
-    const areaId = cityCode + '_' + districtName;
-    if (selectedAreas.some(a => a.id === areaId)) {
-        alert('このエリアはすでに追加されています。');
-        return;
-    }
-
-    if (selectedAreas.length >= 10) {
-        alert('比較できるエリアは最大10個までです。');
-        return;
-    }
-    
-    // UIをロード中にする
-    const addBtn = document.getElementById('add-area-btn');
-    addBtn.disabled = true;
-    addBtn.textContent = '追加中...';
-
-    try {
-        // 1. Nominatim APIで緯度経度を取得 (例: "東京都 渋谷区 渋谷１丁目")
-        const query = `${prefName} ${cityName} ${districtName}`;
-        const geocodeUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}`;
-        
-        let latlng = null;
-        try {
-            const geoRes = await fetch(geocodeUrl);
-            const geoData = await geoRes.json();
-            if (geoData && geoData.length > 0) {
-                latlng = L.latLng(geoData[0].lat, geoData[0].lon);
-            }
-        } catch(geoErr) {
-            console.warn("ジオコーディングに失敗しました", geoErr);
-        }
-
-        // もし詳細な町丁名で見つからなければ、市区町村名だけで再検索して近似値を出す
-        if (!latlng) {
-            const fallbackQuery = `${prefName} ${cityName}`;
-            const fallbackUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(fallbackQuery)}`;
-            try {
-                const fbRes = await fetch(fallbackUrl);
-                const fbData = await fbRes.json();
-                if (fbData && fbData.length > 0) {
-                    latlng = L.latLng(fbData[0].lat, fbData[0].lon);
-                    console.info("市区町村レベルでの座標にフォールバックしました:", latlng);
-                }
-            } catch(fbErr) {
-                console.warn("フォールバックジオコーディングにも失敗しました", fbErr);
-            }
-        }
-
-        // 2. トレンドデータを取得
-        const trendRes = await fetch(`/api/trend?city_code=${cityCode}&district_name=${encodeURIComponent(districtName)}`);
-        if (!trendRes.ok) throw new Error('API Error');
-        const data = await trendRes.json();
-        
-        if (data.trend.every(d => d.avg_price_per_sqm === null)) {
-            alert(`${districtName} の地価データは見つかりませんでした（人口推移のみ表示されます）。データが存在しないか、取引実績がないエリアです。`);
-        }
-        
-        let marker = null;
-        if (latlng) {
-            const icon = L.divIcon({
-                className: 'custom-div-icon',
-                html: `<div style='font-size: 24px; color: gold; text-shadow: 0 0 5px black;'>⭐</div>`,
-                iconSize: [30, 30],
-                iconAnchor: [15, 15]
-            });
-            marker = L.marker(latlng, { icon }).addTo(markerLayer);
-            map.flyTo(latlng, 14); // 追加した場所にズーム
-        }
-
-        selectedAreas.push({
-            id: areaId,
-            city_code: cityCode,
-            pref_name: prefName,
-            city_name: cityName,
-            district_name: districtName,
-            trend: data.trend,
-            marker: marker
-        });
-
-        updateCharts();
-    } catch (err) {
-        console.error("エリアの追加に失敗:", err);
-        alert("データの取得に失敗しました。");
-    } finally {
-        addBtn.disabled = false;
-        addBtn.textContent = '追加';
-    }
+// ---------------------------------------------------------------- ランキング
+async function loadRanking() {
+  const pref = document.getElementById('rank-pref').value;
+  const query = pref ? `?pref_code=${pref}&limit=500` : '?limit=500';
+  state.ranking = await api(`/api/ranking${query}`);
+  renderRanking();
 }
 
+function renderRanking() {
+  const tbody = document.querySelector('#ranking-table tbody');
+  const empty = document.getElementById('ranking-empty');
+  tbody.innerHTML = '';
 
-function initMap() {
-    // 東京駅付近を初期中心に
-    map = L.map('interactive-map').setView([35.6812, 139.7671], 13);
-    
-    // ベースマップ (CartoDB Voyager for clear visibility)
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-        attribution: '&copy; OpenStreetMap &copy; CARTO'
-    }).addTo(map);
+  const minPop = Number(document.getElementById('rank-size').value || 0);
+  const rows = state.ranking
+    .map((row) => ({ ...row, _composite: computeComposite(row) }))
+    .filter((row) => row._composite !== null)
+    .filter((row) => !minPop || (row.raw_pop_total ?? 0) >= minPop)
+    .sort((a, b) => b._composite - a._composite);
 
-    // スターピンを置くためのレイヤー
-    markerLayer = L.layerGroup().addTo(map);
+  empty.hidden = rows.length > 0;
 
-    // 国交省 XPT001 API (成約価格等タイル) レイヤー
-    mlitTileLayer = L.vectorGrid.protobuf('/api/tiles/{z}/{x}/{y}', {
-        vectorTileLayerStyles: {
-            xpt001: {
-                fill: true,
-                weight: 1,
-                fillColor: '#ec4899',
-                color: '#ec4899',
-                fillOpacity: 0.5,
-                opacity: 0.8,
-                radius: 5
-            },
-            XPT001: {
-                fill: true,
-                weight: 1,
-                fillColor: '#ec4899',
-                color: '#ec4899',
-                fillOpacity: 0.5,
-                opacity: 0.8,
-                radius: 5
-            }
+  rows.slice(0, 100).forEach((row, index) => {
+    const tr = el('tr');
+    tr.append(el('td', 'col-rank', String(index + 1)));
+
+    const nameCell = el('td');
+    const link = el('button', 'link-button', row.municipality_name || row.municipality_code);
+    link.addEventListener('click', () => openDetail(row.prefecture_code, row.municipality_code));
+    nameCell.append(link);
+    const pop = row.raw_pop_total;
+    nameCell.append(
+      el(
+        'span',
+        'sub-label',
+        `${row.prefecture_name || ''}${pop ? `　${fmt(pop)}人` : ''}`,
+      ),
+    );
+    tr.append(nameCell);
+
+    tr.append(scoreCell(row._composite, true));
+    DIMENSION_ORDER.forEach((key) => tr.append(scoreCell(row[`dim_${key}`])));
+
+    const price = row.raw_land_unit_price;
+    tr.append(el('td', 'num', price ? `${fmt(price / 10000, 1)}万円/㎡` : '—'));
+
+    const outlook = row.raw_proj_pop_change_2050;
+    const outlookCell = el('td', 'num');
+    if (outlook === null || outlook === undefined) {
+      outlookCell.textContent = '—';
+    } else {
+      outlookCell.textContent = `${fmtSigned(outlook, 0)}%`;
+      outlookCell.style.color = outlook >= 0 ? 'var(--accent)' : 'var(--warm)';
+    }
+    tr.append(outlookCell);
+    tbody.append(tr);
+  });
+}
+
+function scoreCell(value, emphasize = false) {
+  const td = el('td', `num${emphasize ? ' emphasize' : ''}`);
+  if (value === null || value === undefined) {
+    td.textContent = '—';
+    return td;
+  }
+  const bar = el('div', 'score-cell');
+  const fill = el('span', 'score-bar');
+  fill.style.width = `${Math.max(2, Math.min(100, value))}%`;
+  fill.style.background = scoreColor(value);
+  bar.append(fill);
+  bar.append(el('span', 'score-num', fmt(value, 0)));
+  td.append(bar);
+  return td;
+}
+
+function scoreColor(value) {
+  if (value >= 70) return '#1f6f5c';
+  if (value >= 45) return '#7ba05b';
+  if (value >= 25) return '#d9a441';
+  return '#c96f3f';
+}
+
+// ---------------------------------------------------------------- 共通セレクト
+function fillPrefectureSelects() {
+  ['rank-pref', 'detail-pref', 'compare-pref'].forEach((id) => {
+    const select = document.getElementById(id);
+    if (id !== 'rank-pref') select.innerHTML = '<option value="">選択してください</option>';
+    state.prefectures.forEach((pref) => {
+      const option = el('option', null, pref.name);
+      option.value = pref.code;
+      select.append(option);
+    });
+  });
+}
+
+async function loadCities(prefCode, selectId) {
+  const select = document.getElementById(selectId);
+  select.innerHTML = '<option value="">選択してください</option>';
+  if (!prefCode) return;
+  const cities = await api(`/api/cities/${prefCode}`);
+  cities.forEach((city) => {
+    const option = el('option', null, city.municipality);
+    option.value = city.municipality_code;
+    select.append(option);
+  });
+}
+
+// ---------------------------------------------------------------- 詳細
+function setupDetailView() {
+  document.getElementById('detail-pref').addEventListener('change', async (event) => {
+    await loadCities(event.target.value, 'detail-city');
+  });
+  document.getElementById('detail-city').addEventListener('change', (event) => {
+    if (event.target.value) loadDetail(event.target.value);
+  });
+}
+
+async function openDetail(prefCode, cityCode) {
+  document.querySelector('.tab[data-view="detail"]').click();
+  const prefSelect = document.getElementById('detail-pref');
+  prefSelect.value = prefCode;
+  await loadCities(prefCode, 'detail-city');
+  document.getElementById('detail-city').value = cityCode;
+  await loadDetail(cityCode);
+}
+
+async function loadDetail(cityCode) {
+  const [data, districts] = await Promise.all([
+    api(`/api/municipality/${cityCode}`),
+    api(`/api/municipality/${cityCode}/districts`),
+  ]);
+
+  document.getElementById('detail-empty').hidden = true;
+  document.getElementById('detail-body').hidden = false;
+
+  const { municipality, metrics, scores, observation_years: years } = data;
+  document.getElementById('detail-name').textContent = municipality.municipality_name;
+  document.getElementById('detail-sub').textContent =
+    `${municipality.prefecture_name}　人口 ${fmt(metrics.pop_total)}人`;
+
+  const composite = computeComposite(scores);
+  document.getElementById('detail-composite').textContent =
+    composite === null ? '—' : fmt(composite, 0);
+
+  renderRadar(scores);
+  renderHighlights(metrics, scores);
+  renderTimeline(data.child_projection, data.stages);
+  renderPriceChart(data.price_trend);
+  renderPopChart(data.stats_trend);
+  renderDistricts(districts);
+  renderMetrics(metrics, years);
+}
+
+function renderRadar(scores) {
+  destroyChart('radar');
+  const canvas = document.getElementById('radar-chart');
+  const labels = state.meta.dimensions.map((d) => d.label);
+  const values = state.meta.dimensions.map((d) => scores[`dim_${d.key}`] ?? 0);
+
+  state.charts.radar = new Chart(canvas, {
+    type: 'radar',
+    data: {
+      labels,
+      datasets: [
+        {
+          data: values,
+          backgroundColor: 'rgba(31, 111, 92, 0.18)',
+          borderColor: '#1f6f5c',
+          borderWidth: 2,
+          pointBackgroundColor: '#1f6f5c',
         },
-        interactive: true,
-        getFeatureId: function(f) {
-            return f.properties.id || Math.random();
-        }
-    });
-
-    mlitTileLayer.on('click', function(e) {
-        if(e.layer.properties) {
-            const props = e.layer.properties;
-            // 重要なプロパティを先頭に表示
-            const importantKeys = ['TradePrice', 'PricePerUnit', 'Area', 'Municipality', 'DistrictName', 'Type', 'Period'];
-            let content = '<div style="margin-bottom: 8px; font-weight: bold; border-bottom: 1px solid #ccc; padding-bottom: 4px;">取引情報</div>';
-            
-            importantKeys.forEach(k => {
-                if (props[k]) {
-                    content += `<b>${k}</b>: ${props[k]}<br>`;
-                }
-            });
-            
-            content += '<details style="margin-top: 8px;"><summary style="cursor:pointer; color:#0366d6;">すべてのプロパティを表示</summary><div style="margin-top: 4px;">';
-            Object.keys(props).forEach(k => {
-                if (!importantKeys.includes(k)) {
-                    content += `<b>${k}</b>: ${props[k]}<br>`;
-                }
-            });
-            content += '</div></details>';
-
-            L.popup()
-             .setContent(`<div style="max-height: 250px; overflow-y: auto; font-size: 13px; line-height: 1.4;">${content}</div>`)
-             .setLatLng(e.latlng)
-             .openOn(map);
-        }
-    });
-
-    const toggleMlit = document.getElementById('toggle-mlit-tiles');
-    if (toggleMlit) {
-        toggleMlit.addEventListener('change', (e) => {
-            if (e.target.checked) {
-                mlitTileLayer.addTo(map);
-            } else {
-                map.removeLayer(mlitTileLayer);
-            }
-        });
-    }
-}
-
-function removeArea(id) {
-    const idx = selectedAreas.findIndex(a => a.id === id);
-    if (idx !== -1) {
-        const area = selectedAreas[idx];
-        if (area.marker) {
-            markerLayer.removeLayer(area.marker);
-        }
-        selectedAreas.splice(idx, 1);
-        updateCharts();
-    }
-}
-
-function clearAll() {
-    selectedAreas.forEach(area => {
-        if (area.marker) {
-            markerLayer.removeLayer(area.marker);
-        }
-    });
-    selectedAreas = [];
-    updateCharts();
-}
-
-// グラフの更新
-function updateCharts() {
-    const currentYear = new Date().getFullYear();
-    const startYear = currentYear - 20;
-    const labels = [];
-    for(let y = startYear + 1; y <= currentYear; y++) {
-        labels.push(`${y}年`);
-    }
-
-    const priceDatasets = [];
-    const popDatasets = [];
-    const radarDatasets = [];
-    const scoreTrendDatasets = [];
-    const detailedScoresList = [];
-
-    selectedAreas.forEach((area, index) => {
-        const color = COLORS[index % COLORS.length];
-        const prices = [];
-        const pops = [];
-        const overallScores = [];
-
-        // 最新の有効なレコードを取得
-        let latestRecord = area.trend.slice().reverse().find(d => d.population > 0);
-        if (!latestRecord && area.trend.length > 0) {
-            latestRecord = area.trend[area.trend.length - 1];
-        }
-
-        // 年齢別人口データ（詳細データ）を持つ最新のレコードを取得 (例: 2020年の国勢調査)
-        let latestDetailedPopRecord = area.trend.slice().reverse().find(d => d.pop_0_14 != null && d.population > 0) || latestRecord;
-
-        // 地価・取引データを持つ最新のレコードを取得
-        let latestPriceRecord = area.trend.slice().reverse().find(d => d.avg_price_per_sqm > 0) || latestRecord;
-
-        let convenienceScore = 0;
-        let childcareScore = 0;
-        let futureScore = 0;
-        
-        if (latestPriceRecord) {
-            const price = latestPriceRecord.avg_price_per_sqm || 0;
-            const txCount = latestPriceRecord.transaction_count || 0;
-            // 利便性スコア (地価と取引件数から算出、Max100) は最新の地価を使用
-            convenienceScore = Math.min(100, Math.round(((price / 1000000) * 60) + Math.min(40, txCount * 1.5)));
-        }
-
-        if (latestDetailedPopRecord) {
-            const pop = latestDetailedPopRecord.population || 1;
-            const pop0_14 = latestDetailedPopRecord.pop_0_14 || 0;
-            const pop15_64 = latestDetailedPopRecord.pop_15_64 || 0;
-
-            // 子育てスコア (15%を基準100とする)
-            childcareScore = Math.min(100, Math.round((pop0_14 / pop) * (100 / 0.15)));
-            // 将来性スコア (65%を基準100とする)
-            futureScore = Math.min(100, Math.round((pop15_64 / pop) * (100 / 0.65)));
-        }
-
-        // 推移用の年齢割合（データがない年は直近の割合を引き継ぐ）
-        let firstDetailedPopRecord = area.trend.find(d => d.pop_0_14 != null && d.population > 0);
-        let lastPop0_14Ratio = firstDetailedPopRecord ? (firstDetailedPopRecord.pop_0_14 / firstDetailedPopRecord.population) : 0;
-        let lastPop15_64Ratio = firstDetailedPopRecord ? (firstDetailedPopRecord.pop_15_64 / firstDetailedPopRecord.population) : 0;
-
-        // 推移用の地価データ（データがない年は直近の地価を引き継ぐ）
-        let firstPriceRecord = area.trend.find(d => d.avg_price_per_sqm > 0);
-        let lastPrice = firstPriceRecord ? firstPriceRecord.avg_price_per_sqm : 0;
-        let lastTx = firstPriceRecord ? firstPriceRecord.transaction_count : 0;
-
-        for(let y = startYear + 1; y <= currentYear; y++) {
-            const record = area.trend.find(d => d.year === y);
-            prices.push(record ? record.avg_price_per_sqm : null);
-            pops.push(record ? record.population : null);
-
-            // 推移用の総合スコア計算
-            if (record && record.population) {
-                const pop = record.population;
-                
-                if (record.pop_0_14 != null) {
-                    lastPop0_14Ratio = record.pop_0_14 / pop;
-                    lastPop15_64Ratio = record.pop_15_64 / pop;
-                }
-                
-                if (record.avg_price_per_sqm != null) {
-                    lastPrice = record.avg_price_per_sqm;
-                    lastTx = record.transaction_count;
-                }
-                
-                let cScore = Math.min(100, (lastPop0_14Ratio * (100 / 0.15)));
-                let fScore = Math.min(100, (lastPop15_64Ratio * (100 / 0.65)));
-                let cvScore = Math.min(100, ((lastPrice / 1000000) * 60) + Math.min(40, lastTx * 1.5));
-                
-                overallScores.push(Math.round((cScore + fScore + cvScore) / 3));
-            } else {
-                overallScores.push(null);
-            }
-        }
-
-        const labelName = `${area.district_name}`; // (市区町村単位の場合は city_name も入れるが、APIからはdistrict_nameのみ)
-
-        priceDatasets.push({
-            label: labelName,
-            data: prices,
-            borderColor: color.border,
-            backgroundColor: color.bg,
-            borderWidth: 2,
-            tension: 0.3,
-            fill: false,
-            spanGaps: true,
-            pointBackgroundColor: color.border,
-            pointRadius: 3
-        });
-
-        popDatasets.push({
-            label: labelName, // 人口は市区町村単位
-            data: pops,
-            borderColor: color.border,
-            backgroundColor: color.border,
-            borderWidth: 2,
-            tension: 0.3,
-            fill: false,
-            spanGaps: true,
-            pointBackgroundColor: color.border,
-            pointRadius: 3
-        });
-
-        if (latestRecord) {
-            radarDatasets.push({
-                label: labelName,
-                data: [convenienceScore, childcareScore, futureScore],
-                borderColor: color.border,
-                backgroundColor: color.bg,
-                pointBackgroundColor: color.border,
-                borderWidth: 2
-            });
-        }
-        
-        detailedScoresList.push({
-            id: area.id,
-            name: `${area.pref_name} ${area.city_name} ${area.district_name}`,
-            color: color.border,
-            convenienceScore: convenienceScore,
-            childcareScore: childcareScore,
-            futureScore: futureScore,
-            price: latestPriceRecord ? (latestPriceRecord.avg_price_per_sqm || 0) : 0,
-            txCount: latestPriceRecord ? (latestPriceRecord.transaction_count || 0) : 0,
-            pop: latestDetailedPopRecord ? (latestDetailedPopRecord.population || 1) : 1,
-            pop0_14: latestDetailedPopRecord ? (latestDetailedPopRecord.pop_0_14 || 0) : 0,
-            pop15_64: latestDetailedPopRecord ? (latestDetailedPopRecord.pop_15_64 || 0) : 0
-        });
-
-        scoreTrendDatasets.push({
-            label: labelName,
-            data: overallScores,
-            borderColor: color.border,
-            backgroundColor: color.bg,
-            borderWidth: 2,
-            tension: 0.3,
-            fill: false,
-            spanGaps: true,
-            pointBackgroundColor: color.border,
-            pointRadius: 3
-        });
-    });
-
-    // --- 地価推移チャート ---
-    const ctxPrice = document.getElementById('priceChart').getContext('2d');
-    if (priceChartInstance) priceChartInstance.destroy();
-    
-    priceChartInstance = new Chart(ctxPrice, {
-        type: 'line',
-        data: { labels: labels, datasets: priceDatasets },
-        options: getChartOptions('平米単価')
-    });
-
-    // --- 人口推移チャート ---
-    const ctxPop = document.getElementById('popChart').getContext('2d');
-    if (popChartInstance) popChartInstance.destroy();
-    
-    popChartInstance = new Chart(ctxPop, {
-        type: 'line',
-        data: { labels: labels, datasets: popDatasets },
-        options: getChartOptions('人口')
-    });
-
-    // --- レーダーチャート (総合特性スコア) ---
-    const ctxRadar = document.getElementById('scoreRadarChart');
-    if (ctxRadar) {
-        if (scoreRadarChartInstance) scoreRadarChartInstance.destroy();
-        scoreRadarChartInstance = new Chart(ctxRadar.getContext('2d'), {
-            type: 'radar',
-            data: {
-                labels: ['生活利便性・交通', '子育て・教育環境', '将来性・住民特性'],
-                datasets: radarDatasets
-            },
-            options: getRadarChartOptions()
-        });
-    }
-
-    // --- 総合スコア推移チャート ---
-    const ctxScoreTrend = document.getElementById('scoreTrendChart');
-    if (ctxScoreTrend) {
-        if (scoreTrendChartInstance) scoreTrendChartInstance.destroy();
-        scoreTrendChartInstance = new Chart(ctxScoreTrend.getContext('2d'), {
-            type: 'line',
-            data: { labels: labels, datasets: scoreTrendDatasets },
-            options: getChartOptions('総合スコア')
-        });
-    }
-
-    // --- 選択エリアのリスト表示の更新 ---
-    renderSelectedAreasList();
-    renderScoreDetails(detailedScoresList);
-}
-
-function renderScoreDetails(scoresList) {
-    const container = document.getElementById('score-details-container');
-    if (!container) return;
-    
-    container.innerHTML = ''; // クリア
-
-    scoresList.forEach(score => {
-        const card = document.createElement('div');
-        card.className = 'score-detail-card glass-panel';
-        card.style.borderLeft = `4px solid ${score.color}`;
-        
-        const formatPrice = (p) => p > 0 ? (p / 10000).toFixed(1) + '万円/㎡' : 'データなし';
-        const formatPercent = (val, total) => ((val / total) * 100).toFixed(1) + '%';
-        
-        card.innerHTML = `
-            <div style="font-weight: 600; margin-bottom: 0.5rem; color: #f8fafc;">${score.name}</div>
-            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
-                <div class="score-badge">
-                    <span class="score-label">生活利便性・交通</span>
-                    <span class="score-value" style="color: ${score.color}">${score.convenienceScore}</span>
-                    <div class="score-subtext">
-                        地価: ${formatPrice(score.price)}<br>
-                        取引件数: ${score.txCount}件
-                    </div>
-                </div>
-                <div class="score-badge">
-                    <span class="score-label">子育て・教育環境</span>
-                    <span class="score-value" style="color: ${score.color}">${score.childcareScore}</span>
-                    <div class="score-subtext">
-                        14歳以下: ${formatPercent(score.pop0_14, score.pop)}<br>
-                        (${score.pop0_14.toLocaleString()}人)
-                    </div>
-                </div>
-                <div class="score-badge">
-                    <span class="score-label">将来性・住民特性</span>
-                    <span class="score-value" style="color: ${score.color}">${score.futureScore}</span>
-                    <div class="score-subtext">
-                        15-64歳: ${formatPercent(score.pop15_64, score.pop)}<br>
-                        (${score.pop15_64.toLocaleString()}人)
-                    </div>
-                </div>
-            </div>
-        `;
-        container.appendChild(card);
-    });
-}
-
-function renderSelectedAreasList() {
-    const listContainer = document.getElementById('selected-areas-list');
-    listContainer.innerHTML = ''; // クリア
-
-    selectedAreas.forEach((area, index) => {
-        const color = COLORS[index % COLORS.length];
-
-        const item = document.createElement('div');
-        item.className = 'selected-area-item';
-
-        const indicator = document.createElement('span');
-        indicator.className = 'selected-area-color-indicator';
-        indicator.style.backgroundColor = color.border;
-
-        const text = document.createElement('span');
-        text.textContent = `${area.pref_name} ${area.city_name} ${area.district_name}`;
-
-        const removeBtn = document.createElement('button');
-        removeBtn.className = 'remove-area-btn';
-        removeBtn.innerHTML = '✕';
-        removeBtn.title = '削除';
-        removeBtn.onclick = () => {
-            removeArea(area.id);
-        };
-
-        item.appendChild(indicator);
-        item.appendChild(text);
-        item.appendChild(removeBtn);
-
-        listContainer.appendChild(item);
-    });
-}
-
-// 共通チャートオプション
-function getChartOptions(yLabel) {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        color: '#94a3b8',
-        interaction: {
-            mode: 'index',
-            intersect: false,
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        r: {
+          min: 0,
+          max: 100,
+          ticks: { stepSize: 25, backdropColor: 'transparent', font: { size: 10 } },
+          pointLabels: { font: { size: 12 } },
         },
-        scales: {
-            y: {
-                beginAtZero: false,
-                grid: { color: 'rgba(255, 255, 255, 0.05)' },
-                ticks: { color: '#94a3b8' }
-            },
-            x: {
-                grid: { display: false },
-                ticks: { color: '#94a3b8' }
-            }
-        },
-        plugins: {
-            legend: {
-                position: 'bottom',
-                labels: { color: '#f8fafc', usePointStyle: true, padding: 15 }
-            },
-            tooltip: {
-                backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                titleColor: '#fff',
-                bodyColor: '#cbd5e1',
-                borderColor: 'rgba(255,255,255,0.1)',
-                borderWidth: 1
-            }
-        }
-    };
+      },
+    },
+  });
 }
 
-function getRadarChartOptions() {
-    return {
-        responsive: true,
-        maintainAspectRatio: false,
-        color: '#94a3b8',
-        scales: {
-            r: {
-                angleLines: { color: 'rgba(255, 255, 255, 0.1)' },
-                grid: { color: 'rgba(255, 255, 255, 0.1)' },
-                pointLabels: { color: '#f8fafc', font: { size: 13 } },
-                ticks: {
-                    color: '#94a3b8',
-                    backdropColor: 'transparent',
-                    min: 0,
-                    max: 100,
-                    stepSize: 20,
-                    display: false
-                }
-            }
-        },
-        plugins: {
-            legend: {
-                position: 'bottom',
-                labels: { color: '#f8fafc', usePointStyle: true, padding: 15 }
-            },
-            tooltip: {
-                backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                titleColor: '#fff',
-                bodyColor: '#cbd5e1',
-                borderColor: 'rgba(255,255,255,0.1)',
-                borderWidth: 1
-            }
-        }
-    };
+function renderHighlights(metrics, scores) {
+  const container = document.getElementById('detail-highlights');
+  container.innerHTML = '';
+
+  const items = [
+    {
+      label: '住宅地の土地単価',
+      value: metrics.land_unit_price ? `${fmt(metrics.land_unit_price / 10000, 1)}万円/㎡` : '—',
+      note: metrics.land_price_change_10y !== null && metrics.land_price_change_10y !== undefined
+        ? `10年で ${fmtSigned(metrics.land_price_change_10y)}%`
+        : '推移データ不足',
+    },
+    {
+      label: '保育所（未就学児1000人あたり）',
+      value: metrics.nurseries_per_1k_children
+        ? `${fmt(metrics.nurseries_per_1k_children, 1)}か所`
+        : '—',
+      note: '多いほど預け先を探しやすい',
+    },
+    {
+      label: '小学校 教員1人あたり児童数',
+      value: metrics.pupils_per_teacher ? `${fmt(metrics.pupils_per_teacher, 1)}人` : '—',
+      note: '少ないほど手厚い',
+    },
+    {
+      label: '医師（人口1万人あたり）',
+      value: metrics.doctors_per_10k ? `${fmt(metrics.doctors_per_10k, 1)}人` : '—',
+      note: '乳幼児期に効く',
+    },
+    {
+      label: '2050年までの人口見通し',
+      value: metrics.proj_pop_change_2050 !== null && metrics.proj_pop_change_2050 !== undefined
+        ? `${fmtSigned(metrics.proj_pop_change_2050)}%`
+        : '—',
+      note: '社人研の将来推計人口',
+    },
+    {
+      label: '年少人口の10年変化',
+      value: metrics.young_pop_change_10y !== null && metrics.young_pop_change_10y !== undefined
+        ? `${fmtSigned(metrics.young_pop_change_10y)}%`
+        : '—',
+      note: '子育て世帯に選ばれているか',
+    },
+  ];
+
+  items.forEach((item) => {
+    const card = el('div', 'highlight');
+    card.append(el('span', 'highlight-label', item.label));
+    card.append(el('span', 'highlight-value', item.value));
+    card.append(el('span', 'highlight-note', item.note));
+    container.append(card);
+  });
 }
 
-// 実行
-init();
+function renderTimeline(projection, stages) {
+  const container = document.getElementById('detail-timeline');
+  container.innerHTML = '';
+
+  if (!projection || projection.length === 0) {
+    container.append(el('p', 'empty-note', '推計に必要な年齢別人口が不足しています。'));
+    return;
+  }
+
+  projection.forEach((item) => {
+    const card = el('div', 'timeline-card');
+    card.append(el('span', 'timeline-stage', item.label));
+    card.append(el('span', 'timeline-year', `${item.target_year}年ごろ・${item.age_range}`));
+    card.append(el('span', 'timeline-pop', `${fmt(item.population)}人`));
+    card.append(el('span', 'timeline-age', `1学年あたり約 ${fmt(item.per_grade)}人`));
+
+    const rate = item.settle_rate;
+    const badge = el('span', `timeline-badge ${rate >= 1 ? 'up' : rate >= 0.9 ? 'neutral' : 'down'}`);
+    badge.textContent = `定着率 ${fmt(rate, 2)}`;
+    badge.title = rate >= 1
+      ? '生まれた数より多い＝子育て世帯が転入している'
+      : '生まれた数より少ない＝就学前後に転出がある';
+    card.append(badge);
+
+    card.append(el('span', 'timeline-basis', item.basis));
+    container.append(card);
+  });
+}
+
+function renderPriceChart(trend) {
+  destroyChart('price');
+  const canvas = document.getElementById('price-chart');
+  // 集計途中の年は件数が数分の一しかなく、末尾が急落したように見えるので除く
+  const rows = (trend || [])
+    .filter((r) => !r.is_partial)
+    .filter((r) => r.land_unit_price || r.house_price);
+
+  state.charts.price = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: rows.map((r) => r.year),
+      datasets: [
+        {
+          label: '土地㎡単価（住宅地・中央値）',
+          data: rows.map((r) => r.land_unit_price),
+          borderColor: '#1f6f5c',
+          backgroundColor: 'rgba(31,111,92,.1)',
+          yAxisID: 'y',
+          spanGaps: true,
+          tension: 0.25,
+        },
+        {
+          label: '戸建て取引価格（中央値）',
+          data: rows.map((r) => r.house_price),
+          borderColor: '#c96f3f',
+          backgroundColor: 'rgba(201,111,63,.1)',
+          yAxisID: 'y1',
+          spanGaps: true,
+          tension: 0.25,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: {
+          position: 'left',
+          title: { display: true, text: '円/㎡' },
+          ticks: { callback: (v) => `${(v / 10000).toFixed(0)}万` },
+        },
+        y1: {
+          position: 'right',
+          title: { display: true, text: '戸建て価格' },
+          grid: { drawOnChartArea: false },
+          ticks: { callback: (v) => `${(v / 10000000).toFixed(1)}千万` },
+        },
+      },
+    },
+  });
+}
+
+function renderPopChart(trend) {
+  destroyChart('pop');
+  const canvas = document.getElementById('pop-chart');
+  const rows = (trend || []).filter((r) => r.pop_total || r.pop_0_14);
+
+  state.charts.pop = new Chart(canvas, {
+    type: 'line',
+    data: {
+      labels: rows.map((r) => r.year),
+      datasets: [
+        {
+          label: '総人口',
+          data: rows.map((r) => r.pop_total ?? r.pop_census ?? null),
+          borderColor: '#4a6fa5',
+          yAxisID: 'y',
+          spanGaps: true,
+          tension: 0.25,
+        },
+        {
+          label: '15歳未満人口',
+          data: rows.map((r) => r.pop_0_14 ?? null),
+          borderColor: '#c96f3f',
+          yAxisID: 'y1',
+          spanGaps: true,
+          tension: 0.25,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      scales: {
+        y: { position: 'left', title: { display: true, text: '総人口' } },
+        y1: {
+          position: 'right',
+          title: { display: true, text: '15歳未満' },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
+  });
+}
+
+function renderDistricts(districts) {
+  const tbody = document.querySelector('#district-table tbody');
+  tbody.innerHTML = '';
+  if (!districts || districts.length === 0) {
+    const tr = el('tr');
+    const td = el('td', 'empty-note', '対象となる取引がありません。');
+    td.colSpan = 4;
+    tr.append(td);
+    tbody.append(tr);
+    return;
+  }
+  districts.slice(0, 40).forEach((row) => {
+    const tr = el('tr');
+    tr.append(el('td', null, row.district_name));
+    tr.append(el('td', 'num', `${fmt(row.land_unit_price / 10000, 1)}万円`));
+    tr.append(el('td', 'num', `${fmt(row.median_area)}㎡`));
+    tr.append(el('td', 'num', fmt(row.deals)));
+    tbody.append(tr);
+  });
+}
+
+function renderMetrics(metrics, years) {
+  const container = document.getElementById('detail-metrics');
+  container.innerHTML = '';
+
+  const rows = [
+    ['総人口', fmt(metrics.pop_total) + '人', years.pop_total],
+    ['15歳未満人口', fmt(metrics.pop_0_14) + '人', years.pop_0_14],
+    ['年少人口比率', fmt(metrics.young_ratio, 1) + '%', years.pop_0_14],
+    ['高齢化率', fmt(metrics.aging_ratio, 1) + '%', years.pop_total],
+    ['保育所密度', fmt(metrics.nurseries_per_1k_children, 1) + 'か所/千人', years.nurseries],
+    ['小学校数', fmt(metrics.elem_schools) + '校', years.elem_pupils],
+    ['1校あたり児童数', fmt(metrics.pupils_per_school) + '人', years.elem_pupils],
+    ['教員1人あたり児童数', fmt(metrics.pupils_per_teacher, 1) + '人', years.elem_teachers],
+    ['子ども1人あたり児童福祉費', fmtYen(metrics.child_welfare_per_child), years.child_welfare_exp],
+    ['財政力指数', fmt(metrics.fiscal_index, 2), years.fiscal_index],
+    ['医師密度', fmt(metrics.doctors_per_10k, 1) + '人/万人', years.doctors],
+    ['診療所密度', fmt(metrics.clinics_per_10k, 1) + '施設/万人', years.clinics],
+    ['一戸建比率', fmt(metrics.detached_ratio, 1) + '%', years.dwellings_occupied],
+    ['持ち家比率', fmt(metrics.ownership_ratio, 1) + '%', years.dwellings_occupied],
+    ['社会増減', fmtSigned(metrics.net_migration_rate, 1) + '人/千人', years.pop_total],
+    ['昼夜間人口比率', fmt(metrics.day_night_ratio, 1) + '%', years.pop_total],
+  ];
+
+  rows.forEach(([label, value, year]) => {
+    const card = el('div', 'metric-card');
+    card.append(el('span', 'metric-label', label));
+    card.append(el('span', 'metric-value', value));
+    card.append(el('span', 'metric-year', year ? `${year}年` : '—'));
+    container.append(card);
+  });
+}
+
+// ---------------------------------------------------------------- 比較
+function setupCompareView() {
+  document.getElementById('compare-pref').addEventListener('change', async (event) => {
+    await loadCities(event.target.value, 'compare-city');
+  });
+  document.getElementById('compare-add').addEventListener('click', () => {
+    const code = document.getElementById('compare-city').value;
+    if (!code || state.compareCodes.includes(code) || state.compareCodes.length >= 6) return;
+    state.compareCodes.push(code);
+    renderCompare();
+  });
+}
+
+async function renderCompare() {
+  const chips = document.getElementById('compare-chips');
+  const result = document.getElementById('compare-result');
+  chips.innerHTML = '';
+
+  if (state.compareCodes.length === 0) {
+    result.hidden = true;
+    return;
+  }
+
+  const data = await api(`/api/compare?codes=${state.compareCodes.join(',')}`);
+
+  data.forEach((item, index) => {
+    const chip = el('span', 'chip');
+    chip.style.borderColor = PALETTE[index % PALETTE.length];
+    chip.append(el('span', null, item.municipality.municipality_name));
+    const remove = el('button', 'chip-remove', '×');
+    remove.addEventListener('click', () => {
+      state.compareCodes = state.compareCodes.filter(
+        (c) => c !== item.municipality.municipality_code,
+      );
+      renderCompare();
+    });
+    chip.append(remove);
+    chips.append(chip);
+  });
+
+  result.hidden = false;
+  renderCompareRadar(data);
+  renderCompareTable(data);
+}
+
+function renderCompareRadar(data) {
+  destroyChart('compareRadar');
+  const canvas = document.getElementById('compare-radar');
+
+  state.charts.compareRadar = new Chart(canvas, {
+    type: 'radar',
+    data: {
+      labels: state.meta.dimensions.map((d) => d.label),
+      datasets: data.map((item, index) => ({
+        label: item.municipality.municipality_name,
+        data: state.meta.dimensions.map((d) => item.scores[`dim_${d.key}`] ?? 0),
+        borderColor: PALETTE[index % PALETTE.length],
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 3,
+      })),
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      scales: { r: { min: 0, max: 100, ticks: { stepSize: 25 } } },
+    },
+  });
+}
+
+function renderCompareTable(data) {
+  const table = document.getElementById('compare-table');
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+
+  const headRow = el('tr');
+  headRow.append(el('th', null, '項目'));
+  data.forEach((item) => headRow.append(el('th', 'num', item.municipality.municipality_name)));
+  thead.append(headRow);
+
+  const rows = [
+    ['総合スコア', (item) => fmt(computeComposite(item.scores), 0)],
+    ...state.meta.dimensions.map((dim) => [
+      dim.label,
+      (item) => fmt(item.scores[`dim_${dim.key}`], 0),
+    ]),
+    ['土地㎡単価', (item) => {
+      const price = item.scores.raw_land_unit_price;
+      return price ? `${fmt(price / 10000, 1)}万円` : '—';
+    }],
+    ...['nursery', 'elementary', 'junior'].map((stage) => [
+      `${stage === 'nursery' ? '保育園期' : stage === 'elementary' ? '小学校期' : '中学校期'}の同年代`,
+      (item) => {
+        const found = (item.child_projection || []).find((p) => p.stage === stage);
+        return found ? `${fmt(found.population)}人` : '—';
+      },
+    ]),
+  ];
+
+  rows.forEach(([label, accessor]) => {
+    const tr = el('tr');
+    tr.append(el('td', null, label));
+    data.forEach((item) => tr.append(el('td', 'num', accessor(item))));
+    tbody.append(tr);
+  });
+}
+
+// ---------------------------------------------------------------- ハザード
+let hazardLoaded = false;
+async function ensureHazardMap() {
+  if (hazardLoaded) return;
+  hazardLoaded = true;
+  const [{ default: L }] = await Promise.all([
+    import('leaflet'),
+    import('leaflet/dist/leaflet.css'),
+  ]);
+
+  const map = L.map('map').setView([36.2, 139.8], 9);
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+  }).addTo(map);
+
+  const overlays = {
+    洪水浸水想定区域: 'https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png',
+    土砂災害警戒区域: 'https://disaportaldata.gsi.go.jp/raster/05_dosekiryukeikaikuiki/{z}/{x}/{y}.png',
+    津波浸水想定: 'https://disaportaldata.gsi.go.jp/raster/04_tsunami_newlegend_data/{z}/{x}/{y}.png',
+    '地形分類（地盤リスク）': 'https://cyberjapandata.gsi.go.jp/xyz/experimental_landform/{z}/{x}/{y}.png',
+    都市圏活断層図: 'https://cyberjapandata.gsi.go.jp/xyz/afm/{z}/{x}/{y}.png',
+  };
+
+  const layers = {};
+  Object.entries(overlays).forEach(([name, url]) => {
+    layers[name] = L.tileLayer(url, {
+      opacity: 0.7,
+      attribution: '国土地理院',
+    });
+  });
+  layers['洪水浸水想定区域'].addTo(map);
+  L.control.layers(null, layers, { collapsed: false }).addTo(map);
+
+  setTimeout(() => map.invalidateSize(), 200);
+}
+
+init().catch((error) => {
+  console.error(error);
+  document.querySelector('.app-main').prepend(
+    el('p', 'empty-note', `データの読み込みに失敗しました: ${error.message}`),
+  );
+});

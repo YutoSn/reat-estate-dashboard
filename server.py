@@ -1,21 +1,32 @@
-import os
-import requests
-import datetime
-from fastapi import FastAPI, HTTPException, Response
-from fastapi.staticfiles import StaticFiles
-from fastapi.middleware.cors import CORSMiddleware
-from dotenv import load_dotenv
-import math
+"""家を建てる場所を選ぶためのダッシュボード API。"""
 
+import os
+from typing import Any
+
+import pandas as pd
+import requests
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
+from config import (
+    DUCKDB_FILE,
+    STATS_HISTORY_YEARS,
+    TARGET_PREFECTURE_CODES,
+    current_year,
+    stage_years,
+)
+from src.analysis.metrics import derive_metrics, project_child_population
+from src.analysis.scoring import DIMENSIONS, METRIC_SPECS, metric_catalog
 from src.db.duckdb_manager import DuckDBManager
-from config import DUCKDB_FILE, TARGET_YEARS
+from src.indicators import INDICATOR_BY_KEY, STALE_INDICATORS
 
 load_dotenv()
 API_KEY = os.getenv("REAL_ESTATE_LIBRARY_API_KEY")
 
-app = FastAPI(title="Land Price Analysis Backend")
+app = FastAPI(title="住まい選びダッシュボード")
 
-# CORS設定 (開発用)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -24,111 +35,259 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-db = DuckDBManager(DUCKDB_FILE)
+# サーバーは参照しかしないので読み取り専用で開く。
+# 書き込み用に開くと populate.py と同時に動かせず、複数ワーカーでも競合する。
+db = DuckDBManager(DUCKDB_FILE, read_only=True)
 
-@app.get("/api/tiles/{z}/{x}/{y}")
-def get_mlit_tiles(z: int, x: int, y: int):
-    """国交省不動産情報ライブラリ XPT001 APIのプロキシ"""
-    if not API_KEY:
-        raise HTTPException(status_code=500, detail="API Key not configured")
-        
-    url = "https://www.reinfolib.mlit.go.jp/ex-api/external/XPT001"
-    params = {
-        "z": z,
-        "x": x,
-        "y": y,
-        "from": "20231",
-        "to": "20234",
-        "response_format": "pbf"
-    }
-    headers = {
-        "Ocp-Apim-Subscription-Key": API_KEY
-    }
-    
-    try:
-        res = requests.get(url, params=params, headers=headers, timeout=10)
-        if res.status_code == 404:
-            return Response(content=b"", media_type="application/x-protobuf")
-            
-        if res.status_code != 200:
-            raise HTTPException(status_code=res.status_code, detail=res.text)
-            
-        return Response(content=res.content, media_type="application/x-protobuf")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/education_trend")
-def get_education_trend(city_code: str):
+def _clean(value: Any) -> Any:
+    """NaN や numpy 型を JSON に載る形へ落とす。"""
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    if hasattr(value, "item"):
+        return value.item()
+    return value
+
+
+def _records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    if df.empty:
+        return []
+    return [
+        {key: _clean(value) for key, value in row.items()}
+        for row in df.to_dict("records")
+    ]
+
+
+def _price_records(df: pd.DataFrame) -> list[dict[str, Any]]:
+    """価格推移に、集計途中の年かどうかの印をつける。
+
+    国交省の取引データは四半期ごとに追加されるため、進行中の年は件数が
+    数分の一しかない。そのまま折れ線にすると年末に向けて急落したように
+    見えるので、フロント側で区別できるようにしておく。
     """
-    指定された市区町村の教育・子育て関連指標の20年間の推移を取得する。
-    """
-    db = DuckDBManager(DUCKDB_FILE)
-    try:
-        df = db.get_education_trend(city_code)
-        
-        # 最新年からTARGET_YEARS(20年)分にフィルタリング
-        current_year = datetime.datetime.now().year
-        df = df[df['year'] > (current_year - TARGET_YEARS)]
-        
-        # NaNをNoneに変換
-        df = df.replace({float('nan'): None})
-        
-        return {
-            "city_code": city_code,
-            "trend": df.to_dict(orient="records")
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-        
-@app.get("/api/trend")
-def get_district_trend(city_code: str, district_name: str):
-    """指定された市区町村・地区の過去20年の地価および人口トレンドを取得"""
-    df = db.get_district_trend(city_code, district_name)
-    
-    # 最新年からTARGET_YEARS(20年)分にフィルタリング
-    current_year = datetime.datetime.now().year
-    df = df[df['year'] > (current_year - TARGET_YEARS)]
-    
-    # NaNをNoneに変換
-    df = df.replace({float('nan'): None})
-    
-    # 結果の整形
-    trend_list = df.to_dict(orient='records')
-    
+    records = _records(df)
+    this_year = current_year()
+    for record in records:
+        record["is_partial"] = record.get("year") == this_year
+    return records
+
+
+# --------------------------------------------------------------- メタ情報
+@app.get("/api/meta")
+def get_meta():
+    """指標カタログ・観点の定義・子どもの成長タイムライン。"""
     return {
-        "city_code": city_code,
-        "district_name": district_name,
-        "trend": trend_list
+        "dimensions": [
+            {"key": key, **value} for key, value in DIMENSIONS.items()
+        ],
+        "metrics": metric_catalog(),
+        "stages": stage_years(),
+        "indicators": [
+            {
+                "key": ind.key,
+                "label": ind.label,
+                "unit": ind.unit,
+                "group": ind.group,
+                "is_stale": ind.key in STALE_INDICATORS,
+            }
+            for ind in INDICATOR_BY_KEY.values()
+        ],
+        "current_year": current_year(),
     }
+
 
 @app.get("/api/prefectures")
 def get_prefectures():
-    """ドロップダウン用の対象都道府県リスト"""
-    prefectures = [
-        {"code": "03", "name": "岩手県"},
-        {"code": "04", "name": "宮城県"},
-        {"code": "06", "name": "山形県"},
-        {"code": "08", "name": "茨城県"},
-        {"code": "11", "name": "埼玉県"},
-        {"code": "12", "name": "千葉県"},
-        {"code": "13", "name": "東京都"},
-        {"code": "14", "name": "神奈川県"}
-    ]
-    return prefectures
+    prefectures = db.get_prefectures()
+    if prefectures:
+        return prefectures
+    # マスタ未投入時のフォールバック
+    return [{"code": code, "name": code} for code in TARGET_PREFECTURE_CODES]
+
 
 @app.get("/api/cities/{pref_code}")
 def get_cities(pref_code: str):
-    """指定された都道府県の市区町村リストを取得"""
-    cities = db.get_cities(pref_code)
-    return cities
+    return db.get_cities(pref_code)
+
 
 @app.get("/api/districts/{city_code}")
 def get_districts(city_code: str):
-    """指定された市区町村の地区リストを取得"""
-    districts = db.get_districts(city_code)
-    return districts
+    return db.get_districts(city_code)
 
-# Vite等のフロントエンド開発サーバーを利用中なので、ビルドした静的ファイルを
-# 配信するルーティングは省略（または public フォルダをマウントするだけ）。
-# 本番運用時は frontend/dist をマウントする。
-app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
+
+# ------------------------------------------------------------ 市区町村詳細
+@app.get("/api/municipality/{city_code}")
+def get_municipality(city_code: str):
+    """1市区町村のプロフィール一式。"""
+    info = db.get_municipality(city_code)
+    if info is None:
+        raise HTTPException(status_code=404, detail="市区町村が見つかりません")
+
+    stats = db.get_stats(city_code)
+    price_trend = db.get_price_trend(city_code)
+
+    price_latest = db.get_latest_land_price_by_city(years=3)
+    unit_price = None
+    if not price_latest.empty:
+        row = price_latest[price_latest["municipality_code"] == city_code]
+        if not row.empty:
+            unit_price = _clean(row.iloc[0]["land_unit_price"])
+
+    metrics = derive_metrics(stats, land_unit_price=unit_price,
+                             reference_year=current_year())
+    observation_years = metrics.pop("_years", {})
+
+    # 統計の推移（表示年数を絞る）
+    cutoff = current_year() - STATS_HISTORY_YEARS
+    trend = stats[stats.index >= cutoff] if not stats.empty else pd.DataFrame()
+    trend_records = []
+    if not trend.empty:
+        for year, row in trend.iterrows():
+            record = {"year": int(year)}
+            record.update({k: _clean(v) for k, v in row.items()})
+            trend_records.append(record)
+
+    scores = _scores_for(city_code)
+
+    return {
+        "municipality": {k: _clean(v) for k, v in info.items()},
+        "metrics": {k: _clean(v) for k, v in metrics.items()},
+        "observation_years": observation_years,
+        "scores": scores,
+        "stats_trend": trend_records,
+        "price_trend": _price_records(price_trend),
+        "child_projection": project_child_population(
+            stats, birth_year=_birth_year()
+        ),
+        "stages": stage_years(_birth_year()),
+    }
+
+
+@app.get("/api/municipality/{city_code}/districts")
+def get_district_summary(city_code: str, min_deals: int = Query(5, ge=1)):
+    """市区町村内の地区別の住宅地単価ランキング。"""
+    return _records(db.get_district_summary(city_code, min_deals=min_deals))
+
+
+@app.get("/api/district_trend")
+def get_district_trend(city_code: str, district_name: str):
+    """特定の地区の価格推移。"""
+    return {
+        "city_code": city_code,
+        "district_name": district_name,
+        "trend": _price_records(db.get_price_trend(city_code, district_name)),
+    }
+
+
+# ------------------------------------------------------------------ 比較
+@app.get("/api/ranking")
+def get_ranking(
+    pref_code: str | None = None,
+    limit: int = Query(50, ge=1, le=500),
+):
+    """スコアの一覧。重み付けはフロント側で再計算するため素点を返す。"""
+    scores = db.get_scores()
+    if scores.empty:
+        return []
+
+    wide = scores.pivot_table(
+        index="municipality_code", columns="metric", values="value", aggfunc="first"
+    )
+    names = (
+        scores[["municipality_code", "municipality_name", "prefecture_code",
+                "prefecture_name"]]
+        .drop_duplicates(subset="municipality_code")
+        .set_index("municipality_code")
+    )
+    merged = names.join(wide)
+
+    if pref_code:
+        merged = merged[merged["prefecture_code"] == pref_code]
+
+    if "composite" in merged.columns:
+        merged = merged.sort_values("composite", ascending=False)
+
+    merged = merged.head(limit).reset_index()
+    return _records(merged)
+
+
+@app.get("/api/compare")
+def compare(codes: str = Query(..., description="カンマ区切りの市区町村コード")):
+    """複数市区町村を横並びで比較する。"""
+    city_codes = [c.strip() for c in codes.split(",") if c.strip()][:8]
+    if not city_codes:
+        raise HTTPException(status_code=400, detail="コードを指定してください")
+
+    scores = db.get_scores()
+    results = []
+    for code in city_codes:
+        info = db.get_municipality(code)
+        if info is None:
+            continue
+        stats = db.get_stats(code)
+        results.append(
+            {
+                "municipality": {k: _clean(v) for k, v in info.items()},
+                "scores": _scores_for(code, scores),
+                "child_projection": project_child_population(
+                    stats, birth_year=_birth_year()
+                ),
+                "price_trend": _price_records(db.get_price_trend(code)),
+            }
+        )
+    return results
+
+
+# ------------------------------------------------------------ 地図タイル
+@app.get("/api/tiles/{z}/{x}/{y}")
+def get_mlit_tiles(z: int, x: int, y: int):
+    """国交省 不動産情報ライブラリ XPT001 のタイルプロキシ。"""
+    if not API_KEY:
+        raise HTTPException(status_code=500, detail="API Key not configured")
+
+    try:
+        res = requests.get(
+            "https://www.reinfolib.mlit.go.jp/ex-api/external/XPT001",
+            params={
+                "z": z, "x": x, "y": y,
+                "from": "20231", "to": "20234",
+                "response_format": "pbf",
+            },
+            headers={"Ocp-Apim-Subscription-Key": API_KEY},
+            timeout=15,
+        )
+    except requests.RequestException as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    if res.status_code == 404:
+        return Response(content=b"", media_type="application/x-protobuf")
+    if res.status_code != 200:
+        raise HTTPException(status_code=res.status_code, detail=res.text[:200])
+    return Response(content=res.content, media_type="application/x-protobuf")
+
+
+# ------------------------------------------------------------------ 内部
+def _birth_year() -> int:
+    from config import CHILD_BIRTH_YEAR
+
+    return CHILD_BIRTH_YEAR
+
+
+def _scores_for(
+    city_code: str, scores: pd.DataFrame | None = None
+) -> dict[str, Any]:
+    frame = db.get_scores() if scores is None else scores
+    if frame.empty:
+        return {}
+    subset = frame[frame["municipality_code"] == city_code]
+    return {
+        row["metric"]: _clean(row["value"])
+        for _, row in subset.iterrows()
+    }
+
+
+# フロントエンドのビルド成果物を配信（開発時は Vite が別ポートで動く）
+if os.path.isdir("frontend/dist"):
+    app.mount("/", StaticFiles(directory="frontend/dist", html=True), name="frontend")
