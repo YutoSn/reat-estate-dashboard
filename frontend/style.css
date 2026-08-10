@@ -240,6 +240,98 @@ input[type="range"]::-moz-range-thumb {
 .field > span { font-size: .78rem; color: var(--text-soft); }
 .filter-row { display: flex; gap: .5rem; }
 
+.input {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: .88rem;
+  font-variant-numeric: tabular-nums;
+  padding: .45rem .7rem;
+  width: 100%;
+  min-width: 0;
+}
+.input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 入力欄と単位を横に並べる。.field > span の小さい文字を打ち消す */
+.field > .input-unit {
+  display: flex;
+  align-items: center;
+  gap: .4rem;
+  font-size: 1rem;
+  color: var(--text);
+  min-width: 150px;
+}
+.input-unit em {
+  font-style: normal;
+  font-size: .8rem;
+  color: var(--text-soft);
+  white-space: nowrap;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- 予算 */
+.budget-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: .8rem 1rem;
+  margin-top: .8rem;
+}
+
+.budget-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: .4rem 1.4rem;
+  margin-top: 1rem;
+  padding: .8rem 1rem;
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+.budget-item { display: flex; align-items: baseline; gap: .45rem; }
+.budget-item-label { font-size: .78rem; color: var(--text-soft); }
+.budget-item-value { font-size: 1rem; font-variant-numeric: tabular-nums; }
+.budget-item.is-total .budget-item-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--accent);
+}
+.budget-note {
+  flex-basis: 100%;
+  margin: 0;
+  font-size: .74rem;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: .45rem;
+  margin-top: .8rem;
+  font-size: .84rem;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.checkbox input { accent-color: var(--accent); width: 1rem; height: 1rem; }
+
+.cost-value { display: block; font-variant-numeric: tabular-nums; }
+.cost-badge {
+  display: inline-block;
+  margin-top: .15rem;
+  padding: .05rem .4rem;
+  border-radius: 999px;
+  font-size: .68rem;
+  white-space: nowrap;
+}
+.cost-badge.is-within { background: var(--accent-soft); color: var(--accent); }
+.cost-badge.is-over { background: rgba(201, 111, 63, .14); color: var(--warm); }
+
+.highlight.is-good { border-color: var(--accent); background: var(--accent-soft); }
+.highlight.is-warn { border-color: var(--warm); }
+.highlight.is-warn .highlight-value { color: var(--warm); }
+
 .btn, .btn-ghost {
   border-radius: 9px;
   font: inherit;
@@ -496,4 +588,6 @@ input[type="range"]::-moz-range-thumb {
   .score-value { font-size: 2rem; }
   .selector-row { flex-direction: column; align-items: stretch; }
   .select { width: 100%; }
+  .budget-form { grid-template-columns: 1fr 1fr; }
+  .field > .input-unit { min-width: 0; }
 }

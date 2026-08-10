@@ -6,8 +6,9 @@
 
 from typing import Any
 
-import numpy as np
 import pandas as pd
+
+from src.analysis.geo import access_distances
 
 # 指標ごとの「使える鮮度」の上限（年）。これより古い値しかなければ欠測扱い。
 DEFAULT_MAX_AGE = 12
@@ -79,6 +80,8 @@ def derive_metrics(
     stats: pd.DataFrame,
     land_unit_price: float | None = None,
     land_price_change: float | None = None,
+    land_area_median: float | None = None,
+    access: dict[str, Any] | None = None,
     reference_year: int | None = None,
 ) -> dict[str, Any]:
     """1市区町村分の派生指標をまとめて計算する。"""
@@ -161,9 +164,24 @@ def derive_metrics(
         else None
     )
 
+    # --- 利便性 -----------------------------------------------------------
+    # 都心・広域中心までの距離は直線距離（src/analysis/geo.py 参照）。
+    access = access or {}
+    metrics["tokyo_distance_km"] = access.get("tokyo_distance_km")
+    metrics["hub_distance_km"] = access.get("hub_distance_km")
+    metrics["hub_name"] = access.get("hub_name")
+
+    # 可住地人口密度。総面積で割ると山林の広い市が不当に低く出るため、
+    # 実際に人が住める土地（可住地）で割る。単位は 人/km²（可住地面積はha）。
+    habitable_ha = val("habitable_area")
+    metrics["pop_density_habitable"] = _safe_ratio(
+        pop_total, habitable_ha / 100 if habitable_ha else None
+    )
+
     # --- 住宅・価格 -------------------------------------------------------
     metrics["land_unit_price"] = land_unit_price
     metrics["land_price_change_10y"] = land_price_change
+    metrics["land_area_median"] = land_area_median
     metrics["detached_ratio"] = _safe_ratio(
         val("detached_houses"), val("dwellings_occupied"), 100
     )
@@ -177,7 +195,7 @@ def derive_metrics(
         for key in [
             "pop_total", "pop_0_5", "pop_0_14", "nurseries", "child_facilities",
             "elem_pupils", "elem_teachers", "doctors", "clinics", "fiscal_index",
-            "child_welfare_exp", "dwellings_occupied", "crimes",
+            "child_welfare_exp", "dwellings_occupied", "crimes", "habitable_area",
         ]
     }
 
@@ -189,6 +207,7 @@ def build_metric_table(
     price_latest: pd.DataFrame,
     price_history: pd.DataFrame,
     city_codes: list[str],
+    land_area: pd.DataFrame | None = None,
     reference_year: int | None = None,
 ) -> pd.DataFrame:
     """全市区町村分の派生指標テーブルを作る。"""
@@ -199,6 +218,16 @@ def build_metric_table(
         reliable = price_latest[price_latest["deals"] >= MIN_PRICE_DEALS]
         price_map = reliable.set_index("municipality_code")["land_unit_price"].to_dict()
     change_map = _land_price_change_map(price_history)
+
+    if land_area is None or land_area.empty:
+        area_map: dict[str, float] = {}
+    else:
+        reliable_area = land_area[land_area["deals"] >= MIN_PRICE_DEALS]
+        area_map = (
+            reliable_area.set_index("municipality_code")["land_area_median"].to_dict()
+        )
+
+    distances = access_distances()
 
     rows = []
     grouped = (
@@ -219,9 +248,13 @@ def build_metric_table(
             wide,
             land_unit_price=price_map.get(code),
             land_price_change=change_map.get(code),
+            land_area_median=area_map.get(code),
+            access=distances.get(code),
             reference_year=reference_year,
         )
         metrics.pop("_years", None)
+        # hub_name は文字列なのでスコア計算に載せない（実数テーブルは数値だけ）
+        metrics.pop("hub_name", None)
         metrics["municipality_code"] = code
         rows.append(metrics)
 
