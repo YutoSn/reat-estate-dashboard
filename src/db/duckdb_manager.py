@@ -310,6 +310,28 @@ class DuckDBManager:
         """
         return self._query(query, [years])
 
+    def get_land_area_by_city(self, years: int = 10) -> pd.DataFrame:
+        """市区町村ごとの住宅地の取引面積の中央値。
+
+        「この地域で家を建てるなら何㎡の土地を買うことになるか」の目安として、
+        世帯年収から必要額を出すときに使う。単価と違って面積は年ごとの振れが
+        小さいので、直近10年をまとめて中央値を取る。
+        """
+        query = f"""
+            WITH latest AS (SELECT MAX(trade_year) AS y FROM land_prices)
+            SELECT
+                municipality_code,
+                MEDIAN(area) AS land_area_median,
+                COUNT(*) AS deals
+            FROM land_prices, latest
+            WHERE {RESIDENTIAL_LAND_FILTER}
+              AND NOT area_is_masked
+              AND area IS NOT NULL
+              AND trade_year > latest.y - ?
+            GROUP BY municipality_code
+        """
+        return self._query(query, [years])
+
     def get_price_history_by_city(self) -> pd.DataFrame:
         """全市区町村×年の住宅地単価中央値（変化率の算出用）。"""
         query = f"""

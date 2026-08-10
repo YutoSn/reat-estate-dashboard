@@ -34,6 +34,55 @@
 
       <div class="panel">
         <div class="panel-head">
+          <h2>世帯年収から予算を見る</h2>
+          <button class="btn-ghost" id="budget-clear">使わない</button>
+        </div>
+        <p class="panel-note">
+          世帯年収を入れると、その予算で土地と建物に手が届くかを市区町村ごとに試算し、
+          「手が届きやすさ」を単なる価格の安さから <strong>予算に対する適合度</strong> に切り替えます。
+          届かない街は大きく下がり、届く街の中では他の観点で順位がつきます。
+        </p>
+        <div class="budget-form">
+          <label class="field">
+            <span>世帯年収（税込・合算）</span>
+            <span class="input-unit">
+              <input type="number" class="input" id="budget-income" min="0" step="50"
+                     placeholder="例: 700" />
+              <em>万円</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>自己資金（頭金）</span>
+            <span class="input-unit">
+              <input type="number" class="input" id="budget-down" min="0" step="50" />
+              <em>万円</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>建物＋諸費用の想定</span>
+            <span class="input-unit">
+              <input type="number" class="input" id="budget-building" min="0" step="100" />
+              <em>万円</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>年収に対する返済の割合</span>
+            <select id="budget-ratio" class="select"></select>
+          </label>
+          <label class="field">
+            <span>買う土地の広さ</span>
+            <select id="budget-area" class="select"></select>
+          </label>
+        </div>
+        <div class="budget-summary" id="budget-summary" hidden></div>
+        <label class="checkbox" id="budget-only-wrap" hidden>
+          <input type="checkbox" id="budget-only" />
+          <span>予算内に収まる市区町村だけを表示する</span>
+        </label>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
           <h2>何を重視しますか</h2>
           <button class="btn-ghost" id="reset-weights">初期値に戻す</button>
         </div>
@@ -65,20 +114,7 @@
         </p>
         <div class="table-scroll">
           <table class="data-table" id="ranking-table">
-            <thead>
-              <tr>
-                <th class="col-rank">#</th>
-                <th>市区町村</th>
-                <th class="num">総合</th>
-                <th class="num">子育て</th>
-                <th class="num">医療</th>
-                <th class="num">将来性</th>
-                <th class="num">住環境</th>
-                <th class="num">価格</th>
-                <th class="num">土地単価</th>
-                <th class="num">2050年</th>
-              </tr>
-            </thead>
+            <thead></thead>
             <tbody></tbody>
           </table>
         </div>

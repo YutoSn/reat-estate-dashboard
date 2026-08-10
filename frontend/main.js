@@ -9,9 +9,21 @@ const state = {
   prefectures: [],
   compareCodes: [],
   charts: {},
+  // 世帯年収から求める予算。income が未入力のあいだは価格の安さで評価する。
+  budget: {
+    income: null,
+    downPayment: 0,
+    buildingBudget: 0,
+    repaymentRatio: 25,
+    landArea: 0,
+    onlyAffordable: false,
+  },
 };
 
-const DIMENSION_ORDER = ['childcare', 'medical', 'future', 'living', 'affordability'];
+// 観点の並び順は /api/meta に従う（init で埋める）
+let DIMENSION_ORDER = [];
+
+const BUDGET_STORAGE_KEY = 'sumai-budget';
 
 const PALETTE = ['#1f6f5c', '#c96f3f', '#4a6fa5', '#8a5a83', '#5c8a4a', '#a5504a'];
 
@@ -62,12 +74,14 @@ async function init() {
   ]);
   state.meta = meta;
   state.prefectures = prefectures;
+  DIMENSION_ORDER = meta.dimensions.map((dim) => dim.key);
 
   meta.dimensions.forEach((dim) => {
     state.weights[dim.key] = dim.default_weight;
   });
 
   renderTimelineBanner();
+  setupBudgetControls();
   renderWeightControls();
   fillPrefectureSelects();
 
@@ -124,6 +138,208 @@ function renderTimelineBanner() {
   banner.append(row);
 }
 
+// ---------------------------------------------------------------- 予算
+// 世帯年収から「いくらまで出せるか」を出し、市区町村ごとの必要額と突き合わせる。
+// 金額はすべて万円で扱う（画面の入力に合わせるため）。
+
+function budgetActive() {
+  return Number(state.budget.income) > 0;
+}
+
+function onlyAffordable() {
+  return budgetActive() && state.budget.onlyAffordable;
+}
+
+/** 借入可能額（万円）。元利均等返済の現価から求める。 */
+function loanableAmount() {
+  const model = state.meta.budget_model;
+  const monthly = (state.budget.income * state.budget.repaymentRatio) / 100 / 12;
+  const rate = model.interest_rate / 100 / 12;
+  const months = model.loan_years * 12;
+  if (rate === 0) return monthly * months;
+  return (monthly * (1 - (1 + rate) ** -months)) / rate;
+}
+
+/** 予算の総額（万円）＝ 自己資金 ＋ 借入可能額。 */
+function totalBudget() {
+  return state.budget.downPayment + loanableAmount();
+}
+
+/**
+ * その市区町村で買うことになる土地の広さ（㎡）。
+ * 「地域の中央値」を選んだときは実際の取引面積を使うが、
+ * 取引の少ない自治体では中央値が800㎡といった値になるので上下限で挟む。
+ */
+function landAreaFor(row) {
+  if (state.budget.landArea > 0) return state.budget.landArea;
+  const median = row.raw_land_area_median;
+  if (!median) return null;
+  const model = state.meta.budget_model;
+  return Math.min(model.land_area_max, Math.max(model.land_area_min, median));
+}
+
+/**
+ * その市区町村で家を建てるのに要る総額（万円）と、予算に対する適合度。
+ * 単価か面積が取れない自治体は評価しない（null を返す）。
+ */
+function budgetFit(row) {
+  if (!budgetActive()) return null;
+  const unitPrice = row.raw_land_unit_price;
+  const area = landAreaFor(row);
+  if (!unitPrice || !area) return null;
+
+  const landCost = (unitPrice * area) / 10000;
+  const required = landCost + state.budget.buildingBudget;
+  if (required <= 0) return null;
+
+  const budget = totalBudget();
+  const ratio = budget / required;
+  return {
+    area,
+    landCost,
+    required,
+    ratio,
+    withinBudget: ratio >= 1,
+    score: budgetFitScore(ratio),
+  };
+}
+
+/**
+ * 予算比を0〜100点に変換する。
+ *
+ * 予算より安ければ安いほど良い、とはしていない。予算の範囲に収まった時点で
+ * 資金面の条件は満たしており、そこから先は子育て環境や利便性で選ぶべきだからだ。
+ * そのため「余裕を持って届く」ところで頭打ちにし、届かない側だけを強く減点する。
+ */
+function budgetFitScore(ratio) {
+  const model = state.meta.budget_model;
+  const floor = model.reachable_floor;
+  const comfort = model.comfortable_margin;
+  if (ratio <= floor) return 0;
+  if (ratio >= comfort) return 100;
+  if (ratio < 1) return (80 * (ratio - floor)) / (1 - floor);
+  return 80 + (20 * (ratio - 1)) / (comfort - 1);
+}
+
+function setupBudgetControls() {
+  const model = state.meta.budget_model;
+  state.budget.buildingBudget = model.building_budget;
+  state.budget.repaymentRatio = model.repayment_ratio;
+  state.budget.landArea = model.land_area;
+  Object.assign(state.budget, loadStoredBudget());
+
+  const ratioSelect = document.getElementById('budget-ratio');
+  model.repayment_ratio_options.forEach((value) => {
+    const option = el('option', null, `${value}%`);
+    option.value = String(value);
+    ratioSelect.append(option);
+  });
+  ratioSelect.value = String(state.budget.repaymentRatio);
+
+  const areaSelect = document.getElementById('budget-area');
+  model.land_area_options.forEach((value) => {
+    const option = el('option', null, value === 0 ? 'その地域の中央値' : `${value}㎡`);
+    option.value = String(value);
+    areaSelect.append(option);
+  });
+  areaSelect.value = String(state.budget.landArea);
+
+  const income = document.getElementById('budget-income');
+  const down = document.getElementById('budget-down');
+  const building = document.getElementById('budget-building');
+  income.value = state.budget.income ?? '';
+  down.value = String(state.budget.downPayment);
+  building.value = String(state.budget.buildingBudget);
+
+  const onChange = () => {
+    const value = Number(income.value);
+    state.budget.income = value > 0 ? value : null;
+    state.budget.downPayment = Math.max(0, Number(down.value) || 0);
+    state.budget.buildingBudget = Math.max(0, Number(building.value) || 0);
+    state.budget.repaymentRatio = Number(ratioSelect.value);
+    state.budget.landArea = Number(areaSelect.value);
+    storeBudget();
+    renderBudgetSummary();
+    renderRanking();
+  };
+
+  [income, down, building].forEach((input) => input.addEventListener('input', onChange));
+  [ratioSelect, areaSelect].forEach((select) => select.addEventListener('change', onChange));
+
+  const onlyCheckbox = document.getElementById('budget-only');
+  onlyCheckbox.checked = state.budget.onlyAffordable;
+  onlyCheckbox.addEventListener('change', () => {
+    state.budget.onlyAffordable = onlyCheckbox.checked;
+    storeBudget();
+    renderRanking();
+  });
+
+  document.getElementById('budget-clear').addEventListener('click', () => {
+    state.budget.income = null;
+    state.budget.onlyAffordable = false;
+    income.value = '';
+    onlyCheckbox.checked = false;
+    storeBudget();
+    renderBudgetSummary();
+    renderRanking();
+  });
+
+  renderBudgetSummary();
+}
+
+function renderBudgetSummary() {
+  const summary = document.getElementById('budget-summary');
+  const onlyWrap = document.getElementById('budget-only-wrap');
+  summary.innerHTML = '';
+
+  const active = budgetActive();
+  summary.hidden = !active;
+  onlyWrap.hidden = !active;
+  if (!active) return;
+
+  const model = state.meta.budget_model;
+  const loan = loanableAmount();
+  const total = totalBudget();
+
+  [
+    ['借入の目安', `${fmt(loan)}万円`],
+    ['＋ 自己資金', `${fmt(state.budget.downPayment)}万円`],
+    ['＝ 使える予算', `${fmt(total)}万円`],
+  ].forEach(([label, value], index) => {
+    const item = el('div', `budget-item${index === 2 ? ' is-total' : ''}`);
+    item.append(el('span', 'budget-item-label', label));
+    item.append(el('span', 'budget-item-value', value));
+    summary.append(item);
+  });
+
+  summary.append(
+    el(
+      'p',
+      'budget-note',
+      `年収${fmt(state.budget.income)}万円の${state.budget.repaymentRatio}%を`
+        + `年間返済に充て、金利${model.interest_rate}%・${model.loan_years}年・元利均等で`
+        + `返す前提です。実際の借入可能額は勤務先や既存の借入で変わります。`,
+    ),
+  );
+}
+
+function loadStoredBudget() {
+  try {
+    const raw = window.localStorage.getItem(BUDGET_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function storeBudget() {
+  try {
+    window.localStorage.setItem(BUDGET_STORAGE_KEY, JSON.stringify(state.budget));
+  } catch {
+    // プライベートブラウジング等で保存できなくても動作には影響しない
+  }
+}
+
 // ---------------------------------------------------------------- 重み
 function renderWeightControls() {
   const container = document.getElementById('weights');
@@ -154,17 +370,36 @@ function renderWeightControls() {
   });
 }
 
-function computeComposite(row) {
+/**
+ * 観点別スコアを重み付けして総合点にする。
+ * 世帯年収が入っているときだけ、「手が届きやすさ」を価格の安さではなく
+ * その予算に対する適合度に差し替える。
+ */
+function computeComposite(row, fit = undefined) {
+  const budgetFitResult = fit === undefined ? budgetFit(row) : fit;
+
   let total = 0;
   let weightSum = 0;
   DIMENSION_ORDER.forEach((key) => {
-    const value = row[`dim_${key}`];
+    const value = dimensionValue(row, key, budgetFitResult);
     const weight = state.weights[key] ?? 0;
     if (value === null || value === undefined || weight <= 0) return;
     total += value * weight;
     weightSum += weight;
   });
   return weightSum > 0 ? total / weightSum : null;
+}
+
+function dimensionValue(row, key, fit) {
+  if (key === 'affordability' && budgetActive()) {
+    return fit ? fit.score : null;
+  }
+  return row[`dim_${key}`];
+}
+
+function dimensionLabel(dim) {
+  if (dim.key === 'affordability' && budgetActive()) return '予算適合';
+  return dim.short_label || dim.label;
 }
 
 // ---------------------------------------------------------------- ランキング
@@ -175,19 +410,47 @@ async function loadRanking() {
   renderRanking();
 }
 
+function renderRankingHead() {
+  const thead = document.querySelector('#ranking-table thead');
+  thead.innerHTML = '';
+  const tr = el('tr');
+  tr.append(el('th', 'col-rank', '#'));
+  tr.append(el('th', null, '市区町村'));
+  tr.append(el('th', 'num', '総合'));
+  state.meta.dimensions.forEach((dim) => {
+    const th = el('th', 'num', dimensionLabel(dim));
+    th.title = dim.description;
+    tr.append(th);
+  });
+  tr.append(el('th', 'num', '都心まで'));
+  tr.append(el('th', 'num', '土地単価'));
+  if (budgetActive()) tr.append(el('th', 'num', '必要額'));
+  tr.append(el('th', 'num', '2050年'));
+  thead.append(tr);
+}
+
 function renderRanking() {
+  renderRankingHead();
   const tbody = document.querySelector('#ranking-table tbody');
   const empty = document.getElementById('ranking-empty');
   tbody.innerHTML = '';
 
   const minPop = Number(document.getElementById('rank-size').value || 0);
   const rows = state.ranking
-    .map((row) => ({ ...row, _composite: computeComposite(row) }))
+    .map((row) => {
+      const fit = budgetFit(row);
+      return { ...row, _fit: fit, _composite: computeComposite(row, fit) };
+    })
     .filter((row) => row._composite !== null)
     .filter((row) => !minPop || (row.raw_pop_total ?? 0) >= minPop)
+    // 年収を消したときに絞り込みだけが残って全件消えないよう、両方が立っているときだけ効かせる
+    .filter((row) => !onlyAffordable() || row._fit?.withinBudget)
     .sort((a, b) => b._composite - a._composite);
 
   empty.hidden = rows.length > 0;
+  empty.textContent = onlyAffordable()
+    ? 'この予算に収まる市区町村が見つかりません。条件をゆるめてください。'
+    : 'データがありません。';
 
   rows.slice(0, 100).forEach((row, index) => {
     const tr = el('tr');
@@ -208,10 +471,19 @@ function renderRanking() {
     tr.append(nameCell);
 
     tr.append(scoreCell(row._composite, true));
-    DIMENSION_ORDER.forEach((key) => tr.append(scoreCell(row[`dim_${key}`])));
+    DIMENSION_ORDER.forEach((key) =>
+      tr.append(scoreCell(dimensionValue(row, key, row._fit))),
+    );
+
+    const distance = row.raw_tokyo_distance_km;
+    tr.append(el('td', 'num', distance === null || distance === undefined
+      ? '—'
+      : `${fmt(distance, 0)}km`));
 
     const price = row.raw_land_unit_price;
     tr.append(el('td', 'num', price ? `${fmt(price / 10000, 1)}万円/㎡` : '—'));
+
+    if (budgetActive()) tr.append(requiredCostCell(row._fit));
 
     const outlook = row.raw_proj_pop_change_2050;
     const outlookCell = el('td', 'num');
@@ -224,6 +496,26 @@ function renderRanking() {
     tr.append(outlookCell);
     tbody.append(tr);
   });
+}
+
+function requiredCostCell(fit) {
+  const td = el('td', 'num');
+  if (!fit) {
+    td.textContent = '—';
+    td.title = '土地の取引が少なく、必要額を出せません。';
+    return td;
+  }
+  td.append(el('span', 'cost-value', `${fmt(fit.required)}万円`));
+  td.append(
+    el(
+      'span',
+      `cost-badge ${fit.withinBudget ? 'is-within' : 'is-over'}`,
+      fit.withinBudget ? '予算内' : `予算の${fmt(1 / fit.ratio, 1)}倍`,
+    ),
+  );
+  td.title = `土地${fmt(fit.area)}㎡ ${fmt(fit.landCost)}万円 ＋ 建物・諸費用`
+    + ` ${fmt(state.budget.buildingBudget)}万円`;
+  return td;
 }
 
 function scoreCell(value, emphasize = false) {
@@ -307,12 +599,13 @@ async function loadDetail(cityCode) {
   document.getElementById('detail-sub').textContent =
     `${municipality.prefecture_name}　人口 ${fmt(metrics.pop_total)}人`;
 
-  const composite = computeComposite(scores);
+  const fit = budgetFit(scores);
+  const composite = computeComposite(scores, fit);
   document.getElementById('detail-composite').textContent =
     composite === null ? '—' : fmt(composite, 0);
 
-  renderRadar(scores);
-  renderHighlights(metrics, scores);
+  renderRadar(scores, fit);
+  renderHighlights(metrics, fit);
   renderTimeline(data.child_projection, data.stages);
   renderPriceChart(data.price_trend);
   renderPopChart(data.stats_trend);
@@ -320,11 +613,13 @@ async function loadDetail(cityCode) {
   renderMetrics(metrics, years);
 }
 
-function renderRadar(scores) {
+function renderRadar(scores, fit) {
   destroyChart('radar');
   const canvas = document.getElementById('radar-chart');
-  const labels = state.meta.dimensions.map((d) => d.label);
-  const values = state.meta.dimensions.map((d) => scores[`dim_${d.key}`] ?? 0);
+  const labels = state.meta.dimensions.map((d) => dimensionLabel(d));
+  const values = state.meta.dimensions.map(
+    (d) => dimensionValue(scores, d.key, fit) ?? 0,
+  );
 
   state.charts.radar = new Chart(canvas, {
     type: 'radar',
@@ -356,11 +651,41 @@ function renderRadar(scores) {
   });
 }
 
-function renderHighlights(metrics, scores) {
+function renderHighlights(metrics, fit) {
   const container = document.getElementById('detail-highlights');
   container.innerHTML = '';
 
-  const items = [
+  const items = [];
+
+  if (budgetActive()) {
+    items.push(
+      fit
+        ? {
+          label: `予算 ${fmt(totalBudget())}万円 に対して`,
+          value: `${fmt(fit.required)}万円`,
+          note: fit.withinBudget
+            ? `予算内（土地${fmt(fit.area)}㎡ ${fmt(fit.landCost)}万円＋建物等）`
+            : `${fmt(fit.required - totalBudget())}万円 足りない（土地${fmt(fit.area)}㎡）`,
+          tone: fit.withinBudget ? 'good' : 'warn',
+        }
+        : {
+          label: '予算との比較',
+          value: '—',
+          note: '土地の取引が少なく必要額を出せません',
+        },
+    );
+  }
+
+  items.push(
+    {
+      label: '東京駅まで',
+      value: metrics.tokyo_distance_km !== null && metrics.tokyo_distance_km !== undefined
+        ? `${fmt(metrics.tokyo_distance_km, 0)}km`
+        : '—',
+      note: metrics.hub_name && metrics.hub_distance_km !== null
+        ? `最寄りの中心都市は${metrics.hub_name}（${fmt(metrics.hub_distance_km, 0)}km）`
+        : '直線距離。路線網は反映していません',
+    },
     {
       label: '住宅地の土地単価',
       value: metrics.land_unit_price ? `${fmt(metrics.land_unit_price / 10000, 1)}万円/㎡` : '—',
@@ -399,10 +724,10 @@ function renderHighlights(metrics, scores) {
         : '—',
       note: '子育て世帯に選ばれているか',
     },
-  ];
+  );
 
   items.forEach((item) => {
-    const card = el('div', 'highlight');
+    const card = el('div', `highlight${item.tone ? ` is-${item.tone}` : ''}`);
     card.append(el('span', 'highlight-label', item.label));
     card.append(el('span', 'highlight-value', item.value));
     card.append(el('span', 'highlight-note', item.note));
@@ -579,13 +904,22 @@ function renderMetrics(metrics, years) {
     ['持ち家比率', fmt(metrics.ownership_ratio, 1) + '%', years.dwellings_occupied],
     ['社会増減', fmtSigned(metrics.net_migration_rate, 1) + '人/千人', years.pop_total],
     ['昼夜間人口比率', fmt(metrics.day_night_ratio, 1) + '%', years.pop_total],
+    ['東京駅までの距離', fmt(metrics.tokyo_distance_km, 0) + 'km', '直線距離'],
+    [
+      `最寄り中心都市（${metrics.hub_name || '—'}）まで`,
+      fmt(metrics.hub_distance_km, 0) + 'km',
+      '直線距離',
+    ],
+    ['可住地人口密度', fmt(metrics.pop_density_habitable) + '人/km²', years.habitable_area],
+    ['取引された土地の広さ', fmt(metrics.land_area_median) + '㎡', '直近10年の中央値'],
   ];
 
-  rows.forEach(([label, value, year]) => {
+  rows.forEach(([label, value, note]) => {
     const card = el('div', 'metric-card');
     card.append(el('span', 'metric-label', label));
     card.append(el('span', 'metric-value', value));
-    card.append(el('span', 'metric-year', year ? `${year}年` : '—'));
+    const caption = typeof note === 'string' ? note : note ? `${note}年` : '—';
+    card.append(el('span', 'metric-year', caption));
     container.append(card);
   });
 }
@@ -642,10 +976,12 @@ function renderCompareRadar(data) {
   state.charts.compareRadar = new Chart(canvas, {
     type: 'radar',
     data: {
-      labels: state.meta.dimensions.map((d) => d.label),
+      labels: state.meta.dimensions.map((d) => dimensionLabel(d)),
       datasets: data.map((item, index) => ({
         label: item.municipality.municipality_name,
-        data: state.meta.dimensions.map((d) => item.scores[`dim_${d.key}`] ?? 0),
+        data: state.meta.dimensions.map(
+          (d) => dimensionValue(item.scores, d.key, budgetFit(item.scores)) ?? 0,
+        ),
         borderColor: PALETTE[index % PALETTE.length],
         backgroundColor: 'transparent',
         borderWidth: 2,
@@ -675,13 +1011,23 @@ function renderCompareTable(data) {
   const rows = [
     ['総合スコア', (item) => fmt(computeComposite(item.scores), 0)],
     ...state.meta.dimensions.map((dim) => [
-      dim.label,
-      (item) => fmt(item.scores[`dim_${dim.key}`], 0),
+      dim.key === 'affordability' && budgetActive() ? '予算適合' : dim.label,
+      (item) => fmt(dimensionValue(item.scores, dim.key, budgetFit(item.scores)), 0),
     ]),
+    ['東京駅までの距離', (item) => {
+      const distance = item.scores.raw_tokyo_distance_km;
+      return distance === undefined || distance === null ? '—' : `${fmt(distance, 0)}km`;
+    }],
     ['土地㎡単価', (item) => {
       const price = item.scores.raw_land_unit_price;
       return price ? `${fmt(price / 10000, 1)}万円` : '—';
     }],
+    ...(budgetActive()
+      ? [['必要額（土地＋建物）', (item) => {
+        const fit = budgetFit(item.scores);
+        return fit ? `${fmt(fit.required)}万円` : '—';
+      }]]
+      : []),
     ...['nursery', 'elementary', 'junior'].map((stage) => [
       `${stage === 'nursery' ? '保育園期' : stage === 'elementary' ? '小学校期' : '中学校期'}の同年代`,
       (item) => {

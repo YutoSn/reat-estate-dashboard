@@ -18,7 +18,14 @@ import sys
 import pandas as pd
 from dotenv import load_dotenv
 
-from config import DUCKDB_FILE, TARGET_PREFECTURE_CODES, TARGET_YEARS, current_year
+from config import (
+    DUCKDB_FILE,
+    MUNICIPALITY_GEO_FILE,
+    TARGET_PREFECTURE_CODES,
+    TARGET_YEARS,
+    current_year,
+)
+from src.analysis.geo import municipality_points
 from src.analysis.metrics import build_metric_table
 from src.analysis.scoring import composite_score, score_table, scores_to_long
 from src.db.duckdb_manager import DuckDBManager
@@ -184,12 +191,20 @@ def compute_scores(db: DuckDBManager) -> None:
     all_stats = db.get_all_stats()
     price_latest = db.get_latest_land_price_by_city(years=3)
     price_history = db.get_price_history_by_city()
+    land_area = db.get_land_area_by_city(years=10)
+
+    if not municipality_points():
+        _log(
+            f"  {MUNICIPALITY_GEO_FILE} が無いため利便性スコアは算出されません。\n"
+            "  python scripts/build_municipality_geo.py で生成してください。"
+        )
 
     metric_df = build_metric_table(
         all_stats,
         price_latest,
         price_history,
         city_codes,
+        land_area=land_area,
         reference_year=current_year(),
     )
     scores = score_table(metric_df)

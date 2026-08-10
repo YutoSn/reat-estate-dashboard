@@ -11,13 +11,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import (
+    BUDGET_MODEL,
     DUCKDB_FILE,
+    REGIONAL_HUBS,
     STATS_HISTORY_YEARS,
     TARGET_PREFECTURE_CODES,
+    TOKYO_CENTER,
     current_year,
     stage_years,
 )
-from src.analysis.metrics import derive_metrics, project_child_population
+from src.analysis.geo import access_for
+from src.analysis.metrics import (
+    MIN_PRICE_DEALS,
+    derive_metrics,
+    project_child_population,
+)
 from src.analysis.scoring import DIMENSIONS, METRIC_SPECS, metric_catalog
 from src.db.duckdb_manager import DuckDBManager
 from src.indicators import INDICATOR_BY_KEY, STALE_INDICATORS
@@ -94,6 +102,12 @@ def get_meta():
             }
             for ind in INDICATOR_BY_KEY.values()
         ],
+        # 世帯年収から予算を出すときの前提。フロントはここを唯一の定義として使う。
+        "budget_model": BUDGET_MODEL,
+        "access": {
+            "tokyo_center": TOKYO_CENTER[0],
+            "hubs": [name for name, _, _ in REGIONAL_HUBS],
+        },
         "current_year": current_year(),
     }
 
@@ -135,8 +149,24 @@ def get_municipality(city_code: str):
         if not row.empty:
             unit_price = _clean(row.iloc[0]["land_unit_price"])
 
-    metrics = derive_metrics(stats, land_unit_price=unit_price,
-                             reference_year=current_year())
+    # 土地面積の中央値は予算計算の土台になるので、スコア側と同じ件数条件で採る
+    land_area = db.get_land_area_by_city(years=10)
+    area_median = None
+    if not land_area.empty:
+        row = land_area[
+            (land_area["municipality_code"] == city_code)
+            & (land_area["deals"] >= MIN_PRICE_DEALS)
+        ]
+        if not row.empty:
+            area_median = _clean(row.iloc[0]["land_area_median"])
+
+    metrics = derive_metrics(
+        stats,
+        land_unit_price=unit_price,
+        land_area_median=area_median,
+        access=access_for(city_code),
+        reference_year=current_year(),
+    )
     observation_years = metrics.pop("_years", {})
 
     # 統計の推移（表示年数を絞る）

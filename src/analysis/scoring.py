@@ -61,6 +61,22 @@ METRIC_SPECS: list[MetricSpec] = [
         "人口1万人あたりの図書館数。",
     ),
 
+    # --- 利便性（都心・中心都市へのアクセス） -----------------------------
+    MetricSpec(
+        "tokyo_distance_km", "東京都心への近さ", False, "convenience",
+        "東京駅までの直線距離。通勤先としても、新幹線でつながる先としても基準になる。"
+        "路線網は反映していないので、目安として見る。",
+    ),
+    MetricSpec(
+        "hub_distance_km", "広域中心都市への近さ", False, "convenience",
+        "最寄りの主要ターミナル（東京・横浜・大宮・千葉・水戸・仙台・盛岡・山形）"
+        "までの直線距離。日常の通勤・買い物が向かう先への近さ。",
+    ),
+    MetricSpec(
+        "pop_density_habitable", "生活利便施設の集積", True, "convenience",
+        "可住地1km²あたりの人口。高いほど店・駅・病院が徒歩圏にそろいやすい。",
+    ),
+
     # --- 将来の見通し -----------------------------------------------------
     MetricSpec(
         "proj_pop_change_2050", "2050年までの人口見通し", True, "future",
@@ -89,28 +105,40 @@ METRIC_SPECS: list[MetricSpec] = [
 
 DIMENSIONS: dict[str, dict[str, Any]] = {
     "childcare": {
+        "short_label": "子育て",
         "label": "子育て・教育",
         "description": "保育の入りやすさ、学校の手厚さ、自治体の子育て投資。",
-        "default_weight": 0.30,
+        "default_weight": 0.25,
+    },
+    "convenience": {
+        "short_label": "利便性",
+        "label": "利便性",
+        "description": "都心・中心都市への近さと、生活利便施設の集まりやすさ。",
+        "default_weight": 0.15,
     },
     "medical": {
+        "short_label": "医療",
         "label": "医療アクセス",
         "description": "医師・診療所・病院の密度。乳幼児期に最も効く。",
         "default_weight": 0.15,
     },
     "living": {
+        "short_label": "住環境",
         "label": "住環境",
         "description": "戸建て中心の街並みか、文化施設が身近か。",
-        "default_weight": 0.15,
+        "default_weight": 0.10,
     },
     "future": {
+        "short_label": "将来性",
         "label": "将来の見通し",
         "description": "人口推計、年少人口の動き、自治体の財政体力。",
-        "default_weight": 0.25,
+        "default_weight": 0.20,
     },
     "affordability": {
+        "short_label": "価格",
         "label": "手が届きやすさ",
-        "description": "住宅地の実取引価格。安いほど高スコア。",
+        "description": "住宅地の実取引価格。安いほど高スコア。"
+        "世帯年収を入れると、その予算で届くかどうかの評価に切り替わる。",
         "default_weight": 0.15,
     },
 }
