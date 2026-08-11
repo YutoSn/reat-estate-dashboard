@@ -38,7 +38,36 @@ let DIMENSION_ORDER = [];
 const BUDGET_STORAGE_KEY = 'sumai-budget';
 const BALANCE_STORAGE_KEY = 'sumai-balance';
 
-const PALETTE = ['#1f6f5c', '#c96f3f', '#4a6fa5', '#8a5a83', '#5c8a4a', '#a5504a'];
+// 色は CSS 変数を唯一の定義にする。ここで持つとダークモードで追随しないため。
+const cssVar = (name) =>
+  getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+/**
+ * 比較用の系列色。順番は固定で、色覚特性のある人でも隣同士が見分けられるか
+ * （OKLab の色差）と、描画面とのコントラストを検証したうえで並べてある。
+ * 使い回さず、常にこの順に割り当てる。
+ *
+ * 都度 CSS から読むのは、OSのライト／ダーク切り替えに追随させるため。
+ */
+const SERIES_SLOTS = 6;
+const seriesColor = (index) => cssVar(`--series-${(index % SERIES_SLOTS) + 1}`);
+
+/** #rrggbb を rgba() に変換する（塗りの薄い面を作るため）。 */
+function withAlpha(hex, alpha) {
+  const value = hex.replace('#', '');
+  const int = parseInt(
+    value.length === 3 ? value.split('').map((c) => c + c).join('') : value,
+    16,
+  );
+  return `rgba(${(int >> 16) & 255}, ${(int >> 8) & 255}, ${int & 255}, ${alpha})`;
+}
+
+/** Chart.js の目盛り・凡例・グリッドを、いまの配色に合わせる。 */
+function applyChartTheme() {
+  Chart.defaults.color = cssVar('--chart-ink');
+  Chart.defaults.borderColor = cssVar('--chart-grid');
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+}
 
 // ---------------------------------------------------------------- ユーティリティ
 const api = async (path) => {
@@ -80,6 +109,13 @@ const destroyChart = (key) => {
 // ---------------------------------------------------------------- 初期化
 async function init() {
   setupTabs();
+  applyChartTheme();
+  // OSのライト／ダーク切り替えに、グラフの色も追随させる
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    applyChartTheme();
+    renderRanking();
+    if (state.selectedCodes.length > 0) renderSelection();
+  });
 
   const [meta, prefectures] = await Promise.all([
     api('/api/meta'),
@@ -919,10 +955,12 @@ function compositeCell(detail) {
 }
 
 function scoreColor(value) {
-  if (value >= 70) return '#1f6f5c';
-  if (value >= 45) return '#7ba05b';
-  if (value >= 25) return '#d9a441';
-  return '#c96f3f';
+  // 系列色とは別系統の4段階。点数を必ず数字でも併記しているので、
+  // 色だけで意味を運ばせてはいない。
+  if (value >= 70) return cssVar('--score-high');
+  if (value >= 45) return cssVar('--score-mid');
+  if (value >= 25) return cssVar('--score-low');
+  return cssVar('--score-worst');
 }
 
 // ---------------------------------------------------------------- 共通セレクト
@@ -1043,7 +1081,7 @@ function renderChips() {
   state.selectedCodes.forEach((code, index) => {
     const chip = el('span', `chip${code === state.focusCode ? ' is-focus' : ''}`);
     // チップの色は比較レーダーの線の色と合わせる
-    chip.style.borderColor = PALETTE[index % PALETTE.length];
+    chip.style.borderColor = seriesColor(index);
 
     const name = el('button', 'chip-name', cityName(code));
     name.title = '詳細をこの市区町村に切り替える';
@@ -1124,10 +1162,10 @@ function renderRadar(scores, fit) {
       datasets: [
         {
           data: values,
-          backgroundColor: 'rgba(31, 111, 92, 0.18)',
-          borderColor: '#1f6f5c',
+          backgroundColor: withAlpha(cssVar('--accent'), 0.18),
+          borderColor: cssVar('--accent'),
           borderWidth: 2,
-          pointBackgroundColor: '#1f6f5c',
+          pointBackgroundColor: cssVar('--accent'),
         },
       ],
     },
@@ -1260,101 +1298,107 @@ function renderTimeline(projection, stages) {
   });
 }
 
-function renderPriceChart(trend) {
-  destroyChart('price');
-  const canvas = document.getElementById('price-chart');
-  // 集計途中の年は件数が数分の一しかなく、末尾が急落したように見えるので除く
-  const rows = (trend || [])
-    .filter((r) => !r.is_partial)
-    .filter((r) => r.land_unit_price || r.house_price);
+/**
+ * 1本の折れ線を描く。
+ *
+ * 桁の違う2系列を左右2軸で重ねると、交差する位置が縮尺の取り方だけで決まり、
+ * 「単価が戸建て価格を追い越した」といった意味のない読み取りを誘う。
+ * 単位が違うものは軸を分けずにグラフを分ける。
+ */
+function renderLineChart(
+  key, canvasId, { labels, data, color, axisTitle, axisTick, valueLabel },
+) {
+  destroyChart(key);
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
 
-  state.charts.price = new Chart(canvas, {
+  state.charts[key] = new Chart(canvas, {
     type: 'line',
     data: {
-      labels: rows.map((r) => r.year),
+      labels,
       datasets: [
         {
-          label: '土地㎡単価（住宅地・中央値）',
-          data: rows.map((r) => r.land_unit_price),
-          borderColor: '#1f6f5c',
-          backgroundColor: 'rgba(31,111,92,.1)',
-          yAxisID: 'y',
+          data,
+          borderColor: color,
+          backgroundColor: withAlpha(color, 0.12),
+          borderWidth: 2,
+          pointRadius: 0,
+          pointHoverRadius: 5,
           spanGaps: true,
           tension: 0.25,
-        },
-        {
-          label: '戸建て取引価格（中央値）',
-          data: rows.map((r) => r.house_price),
-          borderColor: '#c96f3f',
-          backgroundColor: 'rgba(201,111,63,.1)',
-          yAxisID: 'y1',
-          spanGaps: true,
-          tension: 0.25,
+          fill: true,
         },
       ],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      // 系列が1本なので凡例は不要。見出しがその役割を果たす。
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          callbacks: { label: (item) => valueLabel(item.parsed.y) },
+        },
+      },
       interaction: { mode: 'index', intersect: false },
       scales: {
+        x: { grid: { display: false } },
+        // 単位は軸のタイトルに1回だけ出す。目盛りごとに繰り返すと数字が読みにくい
         y: {
-          position: 'left',
-          title: { display: true, text: '円/㎡' },
-          ticks: { callback: (v) => `${(v / 10000).toFixed(0)}万` },
-        },
-        y1: {
-          position: 'right',
-          title: { display: true, text: '戸建て価格' },
-          grid: { drawOnChartArea: false },
-          ticks: { callback: (v) => `${(v / 10000000).toFixed(1)}千万` },
+          title: { display: true, text: axisTitle },
+          ticks: { callback: axisTick },
         },
       },
     },
   });
 }
 
-function renderPopChart(trend) {
-  destroyChart('pop');
-  const canvas = document.getElementById('pop-chart');
-  const rows = (trend || []).filter((r) => r.pop_total || r.pop_0_14);
+function renderPriceChart(trend) {
+  // 集計途中の年は件数が数分の一しかなく、末尾が急落したように見えるので除く
+  const rows = (trend || [])
+    .filter((r) => !r.is_partial)
+    .filter((r) => r.land_unit_price || r.house_price);
+  const labels = rows.map((r) => r.year);
 
-  state.charts.pop = new Chart(canvas, {
-    type: 'line',
-    data: {
-      labels: rows.map((r) => r.year),
-      datasets: [
-        {
-          label: '総人口',
-          data: rows.map((r) => r.pop_total ?? r.pop_census ?? null),
-          borderColor: '#4a6fa5',
-          yAxisID: 'y',
-          spanGaps: true,
-          tension: 0.25,
-        },
-        {
-          label: '15歳未満人口',
-          data: rows.map((r) => r.pop_0_14 ?? null),
-          borderColor: '#c96f3f',
-          yAxisID: 'y1',
-          spanGaps: true,
-          tension: 0.25,
-        },
-      ],
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      scales: {
-        y: { position: 'left', title: { display: true, text: '総人口' } },
-        y1: {
-          position: 'right',
-          title: { display: true, text: '15歳未満' },
-          grid: { drawOnChartArea: false },
-        },
-      },
-    },
+  renderLineChart('price', 'price-chart', {
+    labels,
+    data: rows.map((r) => r.land_unit_price),
+    color: seriesColor(0),
+    axisTitle: '万円/㎡',
+    axisTick: (v) => fmt(v / 10000, 1),
+    valueLabel: (v) => `${fmt(v / 10000, 1)}万円/㎡`,
+  });
+  renderLineChart('priceHouse', 'price-house-chart', {
+    labels,
+    data: rows.map((r) => r.house_price),
+    color: seriesColor(1),
+    axisTitle: '万円',
+    axisTick: (v) => fmt(v / 10000),
+    valueLabel: (v) => `${fmt(v / 10000)}万円`,
+  });
+}
+
+function renderPopChart(trend) {
+  const rows = (trend || []).filter((r) => r.pop_total || r.pop_0_14);
+  const labels = rows.map((r) => r.year);
+
+  renderLineChart('pop', 'pop-chart', {
+    labels,
+    data: rows.map((r) => r.pop_total ?? r.pop_census ?? null),
+    color: seriesColor(0),
+    axisTitle: '万人',
+    axisTick: (v) => fmt(v / 10000, 1),
+    valueLabel: (v) => `${fmt(v)}人`,
+  });
+  renderLineChart('popYoung', 'pop-young-chart', {
+    labels,
+    data: rows.map((r) => r.pop_0_14 ?? null),
+    color: seriesColor(1),
+    axisTitle: '万人',
+    axisTick: (v) => fmt(v / 10000, 1),
+    valueLabel: (v) => `${fmt(v)}人`,
   });
 }
 
@@ -1450,7 +1494,7 @@ function renderCompareRadar(data) {
         data: state.meta.dimensions.map(
           (d) => dimensionValue(item.scores, d.key, budgetFit(item.scores)) ?? 0,
         ),
-        borderColor: PALETTE[index % PALETTE.length],
+        borderColor: seriesColor(index),
         backgroundColor: 'transparent',
         borderWidth: 2,
         pointRadius: 3,
@@ -1459,7 +1503,15 @@ function renderCompareRadar(data) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      scales: { r: { min: 0, max: 100, ticks: { stepSize: 25 } } },
+      scales: {
+        r: {
+          min: 0,
+          max: 100,
+          // 既定の目盛りは明るい下地が付き、暗い面では白い箱に見えてしまう
+          ticks: { stepSize: 25, backdropColor: 'transparent', font: { size: 10 } },
+          pointLabels: { font: { size: 12 } },
+        },
+      },
     },
   });
 }
@@ -1478,7 +1530,7 @@ function renderCompareTable(data) {
     const th = el('th', `num${code === state.focusCode ? ' is-focus' : ''}`);
     const button = el('button', 'link-button', item.municipality.municipality_name);
     button.title = '詳細をこの市区町村に切り替える';
-    button.style.color = PALETTE[index % PALETTE.length];
+    button.style.color = seriesColor(index);
     button.addEventListener('click', () => {
       state.focusCode = code;
       renderSelection();

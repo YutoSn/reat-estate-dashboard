@@ -3,8 +3,8 @@
   "short_name": "住まい選び",
   "start_url": "/index.html",
   "display": "standalone",
-  "background_color": "#f6f5f1",
-  "theme_color": "#1f6f5c",
+  "background_color": "#e8f2fa",
+  "theme_color": "#1c5cab",
   "description": "子どもの成長を軸に、家を建てる場所を公的統計から見極めるダッシュボード",
   "icons": [
     {

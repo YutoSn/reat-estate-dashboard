@@ -1,36 +1,87 @@
+/*
+ * 明るい水色を基調にした配色。
+ *
+ * 文字・アクセント・警告色はすべて、実際に載る面に対して WCAG AA（4.5:1）を
+ * 満たす値を選んである。入力欄の枠は面に対して3:1が要るので、パネルの
+ * 区切り線（装飾）とは別トークンに分けた。
+ *
+ * グラフの系列色は CSS 変数として持ち、JS から読んでいる。
+ * ダークモードは明度を反転させたのではなく、暗い面用に選び直した値。
+ */
 :root {
-  --bg: #f6f5f1;
+  color-scheme: light;
+  --bg: #e8f2fa;
   --surface: #ffffff;
-  --surface-alt: #fbfaf7;
-  --border: #e2ded4;
-  --text: #23211d;
-  --text-soft: #6b675e;
-  --text-faint: #96918a;
-  --accent: #1f6f5c;
-  --accent-soft: #e8f1ee;
-  --warm: #c96f3f;
+  --surface-alt: #f2f8fd;
+  --border: #cbdeec;
+  --border-strong: #6f8ea4;
+  --text: #12222e;
+  --text-soft: #4a6273;
+  --text-faint: #587483;
+  --accent: #1c5cab;
+  --accent-soft: #d9eafb;
+  --on-accent: #ffffff;
+  --warm: #b34a24;
+  --warm-soft: #fcf0eb;
   --radius: 14px;
-  --shadow: 0 1px 2px rgba(35, 33, 29, .04), 0 8px 24px rgba(35, 33, 29, .06);
+  --shadow: 0 1px 2px rgba(18, 34, 46, .05), 0 8px 24px rgba(18, 34, 46, .08);
+
+  /* グラフの系列色（最大6件の比較用）。順番は固定で、色相の間隔を検証済み */
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --series-4: #eda100;
+  --series-5: #e87ba4;
+  --series-6: #008300;
+
+  /* スコアの4段階。系列色とは別系統にして、順位の色と混同しないようにする */
+  --score-high: #0ca30c;
+  --score-mid: #fab219;
+  --score-low: #ec835a;
+  --score-worst: #d03b3b;
+
+  /* グラフの目盛り・グリッド */
+  --chart-ink: #4a6273;
+  --chart-grid: #dceaf4;
+
   font-synthesis-weight: none;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #171815;
-    --surface: #1f211d;
-    --surface-alt: #24261f;
-    --border: #33362e;
-    --text: #ece9e2;
-    --text-soft: #a8a49a;
-    --text-faint: #7d7a72;
-    --accent: #6bbfa3;
-    --accent-soft: #23342e;
-    --warm: #e09468;
-    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 8px 24px rgba(0, 0, 0, .28);
+    color-scheme: dark;
+    --bg: #0d1a24;
+    --surface: #16242e;
+    --surface-alt: #1c2f3b;
+    --border: #2d4553;
+    --border-strong: #6d8798;
+    --text: #e8f2f8;
+    --text-soft: #a4bccb;
+    --text-faint: #8aa5b6;
+    --accent: #6bb8ea;
+    --accent-soft: #17303f;
+    --on-accent: #0d1a24;
+    --warm: #e8916a;
+    --warm-soft: #3a2419;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .35), 0 8px 24px rgba(0, 0, 0, .35);
+
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --series-4: #c98500;
+    --series-5: #d55181;
+    --series-6: #008300;
+
+    --chart-ink: #a4bccb;
+    --chart-grid: #2a3f4d;
   }
 }
 
 * { box-sizing: border-box; }
+
+/* hidden 属性は UA の display:none で効くが、クラス側で display を指定すると
+   そちらが勝ってしまう（.budget-summary の flex など）。属性を常に優先させる。 */
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -91,7 +142,7 @@ h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: .01em; }
   transition: background .15s, color .15s;
 }
 .tab:hover { background: var(--surface-alt); color: var(--text); }
-.tab.is-active { background: var(--accent); color: #fff; }
+.tab.is-active { background: var(--accent); color: var(--on-accent); }
 
 /* ---------------------------------------------------------------- layout */
 .app-main {
@@ -214,7 +265,7 @@ input[type="range"]::-moz-range-thumb {
 .select {
   appearance: none;
   background: var(--surface-alt);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 9px;
   color: var(--text);
   font: inherit;
@@ -242,7 +293,7 @@ input[type="range"]::-moz-range-thumb {
 
 .input {
   background: var(--surface-alt);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: 9px;
   color: var(--text);
   font: inherit;
@@ -326,11 +377,25 @@ input[type="range"]::-moz-range-thumb {
   white-space: nowrap;
 }
 .cost-badge.is-within { background: var(--accent-soft); color: var(--accent); }
-.cost-badge.is-over { background: rgba(201, 111, 63, .14); color: var(--warm); }
+.cost-badge.is-over { background: var(--warm-soft); color: var(--warm); }
 
 .highlight.is-good { border-color: var(--accent); background: var(--accent-soft); }
 .highlight.is-warn { border-color: var(--warm); }
 .highlight.is-warn .highlight-value { color: var(--warm); }
+
+/* 単位の違う系列は、2軸で重ねずに縦に並べる */
+.chart-stack {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1rem;
+}
+.chart-figure { margin: 0; }
+.chart-figure figcaption {
+  font-size: .8rem;
+  font-weight: 600;
+  color: var(--text-soft);
+  margin-bottom: .3rem;
+}
 
 /* ---------------------------------------------------------- 弱点の扱い */
 .balance {
@@ -359,7 +424,7 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* 減点の原因になった観点 */
-.data-table td.is-weak { background: rgba(201, 111, 63, .1); }
+.data-table td.is-weak { background: var(--warm-soft); }
 .data-table td.is-weak .score-num { color: var(--warm); font-weight: 700; }
 .composite-penalty {
   display: block;
@@ -378,7 +443,7 @@ input[type="range"]::-moz-range-thumb {
   line-height: 1.7;
 }
 .breakdown-total.is-penalized {
-  background: rgba(201, 111, 63, .12);
+  background: var(--warm-soft);
   color: var(--text);
 }
 
@@ -413,7 +478,7 @@ input[type="range"]::-moz-range-thumb {
 .logic-metric-name { font-size: .85rem; font-weight: 600; }
 .logic-direction { font-size: .68rem; padding: .05rem .4rem; border-radius: 999px; }
 .logic-direction.is-up { background: var(--accent-soft); color: var(--accent); }
-.logic-direction.is-down { background: rgba(201, 111, 63, .14); color: var(--warm); }
+.logic-direction.is-down { background: var(--warm-soft); color: var(--warm); }
 .logic-formula {
   display: block;
   margin-top: .3rem;
@@ -469,7 +534,7 @@ input[type="range"]::-moz-range-thumb {
 .breakdown-rank { font-size: .7rem; padding: .05rem .4rem; border-radius: 999px; white-space: nowrap; }
 .breakdown-rank.is-high { background: var(--accent-soft); color: var(--accent); }
 .breakdown-rank.is-mid { background: var(--surface-alt); color: var(--text-soft); }
-.breakdown-rank.is-low { background: rgba(201, 111, 63, .14); color: var(--warm); }
+.breakdown-rank.is-low { background: var(--warm-soft); color: var(--warm); }
 
 .breakdown-inputs { list-style: none; margin: .45rem 0 0; padding: 0; display: grid; gap: .2rem; }
 .breakdown-inputs li {
@@ -491,7 +556,7 @@ input[type="range"]::-moz-range-thumb {
   cursor: pointer;
   transition: opacity .15s;
 }
-.btn { background: var(--accent); color: #fff; border: none; }
+.btn { background: var(--accent); color: var(--on-accent); border: none; }
 .btn:hover { opacity: .88; }
 .btn-ghost {
   background: transparent;
@@ -649,7 +714,7 @@ input[type="range"]::-moz-range-thumb {
   font-variant-numeric: tabular-nums;
 }
 .timeline-badge.up { background: var(--accent-soft); color: var(--accent); }
-.timeline-badge.down { background: rgba(201, 111, 63, .14); color: var(--warm); }
+.timeline-badge.down { background: var(--warm-soft); color: var(--warm); }
 .timeline-badge.neutral { background: var(--border); color: var(--text-soft); }
 .timeline-basis { font-size: .7rem; color: var(--text-faint); margin-top: .25rem; }
 

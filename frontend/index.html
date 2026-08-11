@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <meta name="theme-color" content="#1f6f5c" />
+  <meta name="theme-color" content="#e8f2fa" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0d1a24" media="(prefers-color-scheme: dark)" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <link rel="manifest" href="/manifest.json" />
   <title>住まい選びダッシュボード</title>
@@ -244,16 +245,31 @@
           <p class="panel-note">
             住宅地の <strong>土地のみ</strong> の取引から求めた㎡単価の中央値です。
             マンションや建物付き取引は単価の意味が変わるため分けて集計しています。
+            単位が違うので、1枚に重ねず縦に並べています。
           </p>
-          <div class="chart-box tall">
-            <canvas id="price-chart"></canvas>
+          <div class="chart-stack">
+            <figure class="chart-figure">
+              <figcaption>土地の㎡単価（住宅地・中央値）</figcaption>
+              <div class="chart-box"><canvas id="price-chart"></canvas></div>
+            </figure>
+            <figure class="chart-figure">
+              <figcaption>戸建て（土地と建物）の取引価格（中央値）</figcaption>
+              <div class="chart-box"><canvas id="price-house-chart"></canvas></div>
+            </figure>
           </div>
         </div>
 
         <div class="panel">
           <h2>人口の推移</h2>
-          <div class="chart-box tall">
-            <canvas id="pop-chart"></canvas>
+          <div class="chart-stack">
+            <figure class="chart-figure">
+              <figcaption>総人口</figcaption>
+              <div class="chart-box"><canvas id="pop-chart"></canvas></div>
+            </figure>
+            <figure class="chart-figure">
+              <figcaption>15歳未満人口</figcaption>
+              <div class="chart-box"><canvas id="pop-young-chart"></canvas></div>
+            </figure>
           </div>
         </div>
 
