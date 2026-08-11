@@ -697,6 +697,36 @@ input[type="range"]::-moz-range-thumb {
 }
 .chip-remove:hover { color: var(--warm); }
 
+/* 詳細を表示している1件。チップの色は比較レーダーの線と対応する */
+.chip.is-focus { background: var(--accent-soft); box-shadow: var(--shadow); }
+.chip-name {
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.chip.is-focus .chip-name { font-weight: 700; }
+.chip-name:hover { text-decoration: underline; }
+
+.hero-eyebrow {
+  display: inline-block;
+  margin-bottom: .2rem;
+  padding: .1rem .5rem;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: .7rem;
+  font-weight: 600;
+}
+
+/* 比較表で、いま詳細を出している列を目立たせる */
+#compare-table th.is-focus,
+#compare-table td.is-focus { background: var(--accent-soft); }
+#compare-table tr.is-total td { font-weight: 700; }
+#compare-table th .link-button { font-weight: 700; }
+
 /* ----------------------------------------------------------------- map */
 .map-wrap {
   border: 1px solid var(--border);

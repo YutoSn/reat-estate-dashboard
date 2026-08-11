@@ -20,8 +20,7 @@
       </div>
       <nav class="tabs" role="tablist">
         <button class="tab is-active" data-view="explore" role="tab">探す</button>
-        <button class="tab" data-view="detail" role="tab">詳しく見る</button>
-        <button class="tab" data-view="compare" role="tab">比べる</button>
+        <button class="tab" data-view="detail" role="tab">詳しく見る・比べる</button>
         <button class="tab" data-view="hazard" role="tab">災害リスク</button>
       </nav>
     </div>
@@ -159,9 +158,13 @@
       </div>
     </section>
 
-    <!-- ========================== 詳しく見る ========================== -->
+    <!-- ==================== 詳しく見る・比べる ==================== -->
     <section class="view" id="view-detail">
       <div class="panel">
+        <div class="panel-head">
+          <h2>市区町村を選ぶ</h2>
+          <span class="panel-hint">2件以上で比較表が出ます（最大6件）</span>
+        </div>
         <div class="selector-row">
           <label class="field">
             <span>都県</span>
@@ -171,6 +174,25 @@
             <span>市区町村</span>
             <select id="detail-city" class="select"></select>
           </label>
+          <button class="btn-ghost" id="selection-clear" hidden>すべて外す</button>
+        </div>
+        <div class="chip-row" id="selection-chips"></div>
+        <p class="panel-note" id="selection-hint" hidden></p>
+      </div>
+
+      <div class="panel" id="compare-result" hidden>
+        <div class="panel-head">
+          <h2>比べる</h2>
+          <span class="panel-hint">名前を押すと、その市区町村の詳細に切り替わります</span>
+        </div>
+        <div class="chart-box tall">
+          <canvas id="compare-radar"></canvas>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="compare-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
         </div>
       </div>
 
@@ -178,6 +200,7 @@
         <div class="panel hero-panel">
           <div class="hero-head">
             <div>
+              <span class="hero-eyebrow" id="detail-eyebrow" hidden>選択中の詳細</span>
               <h2 id="detail-name">—</h2>
               <p class="hero-sub" id="detail-sub">—</p>
             </div>
@@ -264,40 +287,6 @@
       </div>
 
       <p class="empty-note" id="detail-empty">市区町村を選んでください。</p>
-    </section>
-
-    <!-- ============================= 比べる ============================= -->
-    <section class="view" id="view-compare">
-      <div class="panel">
-        <div class="panel-head">
-          <h2>比較する市区町村</h2>
-          <span class="panel-hint">最大6件</span>
-        </div>
-        <div class="selector-row">
-          <label class="field">
-            <span>都県</span>
-            <select id="compare-pref" class="select"></select>
-          </label>
-          <label class="field">
-            <span>市区町村</span>
-            <select id="compare-city" class="select"></select>
-          </label>
-          <button class="btn" id="compare-add">追加</button>
-        </div>
-        <div class="chip-row" id="compare-chips"></div>
-      </div>
-
-      <div class="panel" id="compare-result" hidden>
-        <div class="chart-box tall">
-          <canvas id="compare-radar"></canvas>
-        </div>
-        <div class="table-scroll">
-          <table class="data-table" id="compare-table">
-            <thead></thead>
-            <tbody></tbody>
-          </table>
-        </div>
-      </div>
     </section>
 
     <!-- ========================== 災害リスク ========================== -->

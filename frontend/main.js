@@ -7,7 +7,13 @@ const state = {
   weights: {},
   ranking: [],
   prefectures: [],
-  compareCodes: [],
+  // 「詳しく見る・比べる」で選んでいる市区町村。1件なら詳細だけ、
+  // 2件以上なら比較も出す。focusCode が詳細を表示している1件。
+  selectedCodes: [],
+  focusCode: null,
+  detailCache: new Map(),
+  districtCache: new Map(),
+  cityNames: new Map(),
   charts: {},
   // 弱点の扱い。floor を下回った観点があるぶんだけ総合点から引く。
   balance: {
@@ -107,7 +113,6 @@ async function init() {
   await loadRanking();
 
   setupDetailView();
-  setupCompareView();
 }
 
 function setupTabs() {
@@ -748,6 +753,11 @@ async function loadRanking() {
   const pref = document.getElementById('rank-pref').value;
   const query = pref ? `?pref_code=${pref}&limit=500` : '?limit=500';
   state.ranking = await api(`/api/ranking${query}`);
+  state.ranking.forEach((row) => {
+    if (row.municipality_name) {
+      state.cityNames.set(row.municipality_code, row.municipality_name);
+    }
+  });
   renderRanking();
 }
 
@@ -917,7 +927,7 @@ function scoreColor(value) {
 
 // ---------------------------------------------------------------- 共通セレクト
 function fillPrefectureSelects() {
-  ['rank-pref', 'detail-pref', 'compare-pref'].forEach((id) => {
+  ['rank-pref', 'detail-pref'].forEach((id) => {
     const select = document.getElementById(id);
     if (id !== 'rank-pref') select.innerHTML = '<option value="">選択してください</option>';
     state.prefectures.forEach((pref) => {
@@ -934,19 +944,120 @@ async function loadCities(prefCode, selectId) {
   if (!prefCode) return;
   const cities = await api(`/api/cities/${prefCode}`);
   cities.forEach((city) => {
+    state.cityNames.set(city.municipality_code, city.municipality);
     const option = el('option', null, city.municipality);
     option.value = city.municipality_code;
     select.append(option);
   });
 }
 
-// ---------------------------------------------------------------- 詳細
+/** 市区町村コードから表示名。詳細の取得を待たずに名前を出すために使う。 */
+function cityName(code) {
+  return state.detailCache.get(code)?.municipality?.municipality_name
+    ?? state.cityNames.get(code)
+    ?? code;
+}
+
+// -------------------------------------------------- 詳しく見る・比べる
+// 選択リストは1本。1件なら詳細だけ、2件以上なら比較表も出す。
+// 「詳細を見る」と「比べる」は同じ検討の連続した動作なので、画面を分けない。
+const MAX_SELECTION = 6;
+
 function setupDetailView() {
   document.getElementById('detail-pref').addEventListener('change', async (event) => {
     await loadCities(event.target.value, 'detail-city');
   });
   document.getElementById('detail-city').addEventListener('change', (event) => {
-    if (event.target.value) loadDetail(event.target.value);
+    if (event.target.value) selectCity(event.target.value);
+  });
+  document.getElementById('selection-clear').addEventListener('click', () => {
+    state.selectedCodes = [];
+    state.focusCode = null;
+    renderSelection();
+  });
+}
+
+/** 市区町村を選択リストに加えて、詳細をそこに切り替える。 */
+function selectCity(cityCode) {
+  if (!state.selectedCodes.includes(cityCode)) {
+    if (state.selectedCodes.length >= MAX_SELECTION) {
+      showSelectionHint(
+        `選べるのは${MAX_SELECTION}件までです。× で外してから選んでください。`,
+      );
+      return;
+    }
+    state.selectedCodes.push(cityCode);
+  }
+  state.focusCode = cityCode;
+  showSelectionHint(null);
+  renderSelection();
+}
+
+function removeCity(cityCode) {
+  state.selectedCodes = state.selectedCodes.filter((code) => code !== cityCode);
+  if (state.focusCode === cityCode) {
+    state.focusCode = state.selectedCodes[state.selectedCodes.length - 1] ?? null;
+  }
+  showSelectionHint(null);
+  renderSelection();
+}
+
+function showSelectionHint(message) {
+  const hint = document.getElementById('selection-hint');
+  hint.textContent = message ?? '';
+  hint.hidden = !message;
+}
+
+/** 選択の状態を、チップ・比較・詳細にまとめて反映する。 */
+async function renderSelection() {
+  renderChips();
+  document.getElementById('selection-clear').hidden = state.selectedCodes.length === 0;
+
+  const detailBody = document.getElementById('detail-body');
+  const empty = document.getElementById('detail-empty');
+  const compare = document.getElementById('compare-result');
+
+  if (state.selectedCodes.length === 0) {
+    detailBody.hidden = true;
+    compare.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  empty.hidden = true;
+
+  // 比較は2件以上のときだけ。1件で比較表を出しても読むものが無い。
+  if (state.selectedCodes.length >= 2) {
+    await renderComparison();
+  } else {
+    compare.hidden = true;
+    destroyChart('compareRadar');
+  }
+
+  if (state.focusCode) await loadDetail(state.focusCode);
+}
+
+function renderChips() {
+  const chips = document.getElementById('selection-chips');
+  chips.innerHTML = '';
+
+  state.selectedCodes.forEach((code, index) => {
+    const chip = el('span', `chip${code === state.focusCode ? ' is-focus' : ''}`);
+    // チップの色は比較レーダーの線の色と合わせる
+    chip.style.borderColor = PALETTE[index % PALETTE.length];
+
+    const name = el('button', 'chip-name', cityName(code));
+    name.title = '詳細をこの市区町村に切り替える';
+    name.addEventListener('click', () => {
+      state.focusCode = code;
+      renderSelection();
+    });
+    chip.append(name);
+
+    const remove = el('button', 'chip-remove', '×');
+    remove.title = '選択から外す';
+    remove.addEventListener('click', () => removeCity(code));
+    chip.append(remove);
+    chips.append(chip);
   });
 }
 
@@ -956,19 +1067,29 @@ async function openDetail(prefCode, cityCode) {
   prefSelect.value = prefCode;
   await loadCities(prefCode, 'detail-city');
   document.getElementById('detail-city').value = cityCode;
-  await loadDetail(cityCode);
+  selectCity(cityCode);
 }
 
 async function loadDetail(cityCode) {
-  const [data, districts] = await Promise.all([
-    api(`/api/municipality/${cityCode}`),
-    api(`/api/municipality/${cityCode}/districts`),
-  ]);
+  let data = state.detailCache.get(cityCode);
+  let districts = state.districtCache.get(cityCode);
+  if (!data || !districts) {
+    [data, districts] = await Promise.all([
+      api(`/api/municipality/${cityCode}`),
+      api(`/api/municipality/${cityCode}/districts`),
+    ]);
+    state.detailCache.set(cityCode, data);
+    state.districtCache.set(cityCode, districts);
+    // 取得を待つあいだに別の市区町村へ切り替わっていたら、古い結果は描かない
+    if (state.focusCode !== cityCode) return;
+  }
 
   document.getElementById('detail-empty').hidden = true;
   document.getElementById('detail-body').hidden = false;
 
   const { municipality, metrics, scores, observation_years: years } = data;
+  // 複数選んでいるときは、どれの詳細を見ているのかを見出しでも示す
+  document.getElementById('detail-eyebrow').hidden = state.selectedCodes.length < 2;
   document.getElementById('detail-name').textContent = municipality.municipality_name;
   document.getElementById('detail-sub').textContent =
     `${municipality.prefecture_name}　人口 ${fmt(metrics.pop_total)}人`;
@@ -1300,48 +1421,20 @@ function renderMetrics(metrics, years) {
 }
 
 // ---------------------------------------------------------------- 比較
-function setupCompareView() {
-  document.getElementById('compare-pref').addEventListener('change', async (event) => {
-    await loadCities(event.target.value, 'compare-city');
-  });
-  document.getElementById('compare-add').addEventListener('click', () => {
-    const code = document.getElementById('compare-city').value;
-    if (!code || state.compareCodes.includes(code) || state.compareCodes.length >= 6) return;
-    state.compareCodes.push(code);
-    renderCompare();
-  });
-}
-
-async function renderCompare() {
-  const chips = document.getElementById('compare-chips');
+async function renderComparison() {
   const result = document.getElementById('compare-result');
-  chips.innerHTML = '';
-
-  if (state.compareCodes.length === 0) {
-    result.hidden = true;
-    return;
-  }
-
-  const data = await api(`/api/compare?codes=${state.compareCodes.join(',')}`);
-
-  data.forEach((item, index) => {
-    const chip = el('span', 'chip');
-    chip.style.borderColor = PALETTE[index % PALETTE.length];
-    chip.append(el('span', null, item.municipality.municipality_name));
-    const remove = el('button', 'chip-remove', '×');
-    remove.addEventListener('click', () => {
-      state.compareCodes = state.compareCodes.filter(
-        (c) => c !== item.municipality.municipality_code,
-      );
-      renderCompare();
-    });
-    chip.append(remove);
-    chips.append(chip);
-  });
+  const requested = state.selectedCodes.join(',');
+  const data = await api(`/api/compare?codes=${requested}`);
+  // 取得を待つあいだに選択が変わっていたら、古い結果は描かない
+  if (state.selectedCodes.join(',') !== requested) return;
+  // 選択順と並びを合わせる。チップ・レーダー・表で色と順序がずれると読めない。
+  const ordered = state.selectedCodes
+    .map((code) => data.find((item) => item.municipality.municipality_code === code))
+    .filter(Boolean);
 
   result.hidden = false;
-  renderCompareRadar(data);
-  renderCompareTable(data);
+  renderCompareRadar(ordered);
+  renderCompareTable(ordered);
 }
 
 function renderCompareRadar(data) {
@@ -1380,15 +1473,35 @@ function renderCompareTable(data) {
 
   const headRow = el('tr');
   headRow.append(el('th', null, '項目'));
-  data.forEach((item) => headRow.append(el('th', 'num', item.municipality.municipality_name)));
+  data.forEach((item, index) => {
+    const code = item.municipality.municipality_code;
+    const th = el('th', `num${code === state.focusCode ? ' is-focus' : ''}`);
+    const button = el('button', 'link-button', item.municipality.municipality_name);
+    button.title = '詳細をこの市区町村に切り替える';
+    button.style.color = PALETTE[index % PALETTE.length];
+    button.addEventListener('click', () => {
+      state.focusCode = code;
+      renderSelection();
+      document.getElementById('detail-body').scrollIntoView({ behavior: 'smooth' });
+    });
+    th.append(button);
+    headRow.append(th);
+  });
   thead.append(headRow);
 
   const rows = [
-    ['総合スコア', (item) => fmt(computeComposite(item.scores), 0)],
+    ['総合スコア', (item) => fmt(computeComposite(item.scores), 0), 'is-total'],
     ...state.meta.dimensions.map((dim) => [
       dim.key === 'affordability' && budgetActive() ? '予算適合' : dim.label,
       (item) => fmt(dimensionValue(item.scores, dim.key, budgetFit(item.scores)), 0),
     ]),
+    // 総合点がどこで削られたかは、横並びで見るときにいちばん効く情報
+    ['いちばん低い観点', (item) => {
+      const detail = compositeDetail(item.scores);
+      if (!detail || !detail.weakest) return '—';
+      const dim = state.meta.dimensions.find((d) => d.key === detail.weakest.key);
+      return `${dim ? dimensionLabel(dim) : detail.weakest.key} ${fmt(detail.weakest.value, 0)}`;
+    }],
     ['東京駅までの距離', (item) => {
       const distance = item.scores.raw_tokyo_distance_km;
       return distance === undefined || distance === null ? '—' : `${fmt(distance, 0)}km`;
@@ -1412,10 +1525,13 @@ function renderCompareTable(data) {
     ]),
   ];
 
-  rows.forEach(([label, accessor]) => {
-    const tr = el('tr');
+  rows.forEach(([label, accessor, rowClass]) => {
+    const tr = el('tr', rowClass);
     tr.append(el('td', null, label));
-    data.forEach((item) => tr.append(el('td', 'num', accessor(item))));
+    data.forEach((item) => {
+      const code = item.municipality.municipality_code;
+      tr.append(el('td', `num${code === state.focusCode ? ' is-focus' : ''}`, accessor(item)));
+    });
     tbody.append(tr);
   });
 }
