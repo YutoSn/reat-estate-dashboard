@@ -35,12 +35,13 @@ def haversine_km(
 
 
 @functools.cache
-def municipality_points() -> dict[str, tuple[float, float]]:
-    """市区町村コード -> (緯度, 経度)。CSVが無ければ空で返す。"""
-    if not os.path.exists(MUNICIPALITY_GEO_FILE):
-        return {}
-
+def _geo_rows() -> tuple[dict[str, tuple[float, float]], dict[str, str]]:
+    """CSVから (コード -> 座標) と (コード -> role) を読む。"""
     points: dict[str, tuple[float, float]] = {}
+    roles: dict[str, str] = {}
+    if not os.path.exists(MUNICIPALITY_GEO_FILE):
+        return points, roles
+
     with open(MUNICIPALITY_GEO_FILE, encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
             try:
@@ -50,7 +51,29 @@ def municipality_points() -> dict[str, tuple[float, float]]:
                 )
             except (TypeError, ValueError, KeyError):
                 continue
-    return points
+            # role 列は隣接県の代表点を足したときに追加した。無ければ全て対象扱い。
+            roles[row["municipality_code"]] = row.get("role") or "target"
+    return points, roles
+
+
+def municipality_points() -> dict[str, tuple[float, float]]:
+    """市区町村コード -> (緯度, 経度)。対象8都県も隣接県も含む。"""
+    return _geo_rows()[0]
+
+
+def neighbor_point_codes() -> set[str]:
+    """隣接県の代表点のコード。圏内集計にだけ使う。"""
+    _, roles = _geo_rows()
+    return {code for code, role in roles.items() if role == "neighbor"}
+
+
+def target_points() -> dict[str, tuple[float, float]]:
+    """対象8都県だけの代表点。都心アクセスの指標はこちらを使う。"""
+    points, roles = _geo_rows()
+    return {
+        code: value for code, value in points.items()
+        if roles.get(code, "target") == "target"
+    }
 
 
 @functools.cache
@@ -59,7 +82,7 @@ def access_distances() -> dict[str, dict[str, float | str]]:
     _, tokyo_lat, tokyo_lon = TOKYO_CENTER
 
     result: dict[str, dict[str, float | str]] = {}
-    for code, (lat, lon) in municipality_points().items():
+    for code, (lat, lon) in target_points().items():
         nearest_name, nearest_km = min(
             (
                 (name, haversine_km(lat, lon, hub_lat, hub_lon))

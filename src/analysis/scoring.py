@@ -65,26 +65,28 @@ METRIC_SPECS: list[MetricSpec] = [
     ),
 
     # --- 医療アクセス -----------------------------------------------------
+    # かかりつけ医は歩いて／自転車で行く先なので、自市内の密度で見る
     MetricSpec(
-        "doctors_per_10k", "医師の密度", True, "medical",
-        "人口1万人あたりの医師数。乳幼児期は受診頻度が高く効いてくる。",
-        unit="人/万人",
-        formula="医師数 ÷ 総人口 × 10000",
-        inputs=("doctors", "pop_total"),
-    ),
-    MetricSpec(
-        "clinics_per_10k", "診療所の密度", True, "medical",
-        "人口1万人あたりの一般診療所数。日常的なかかりつけ医の探しやすさ。",
+        "clinics_per_10k", "診療所の密度（自市内）", True, "medical",
+        "人口1万人あたりの一般診療所数。かかりつけ医は日常的に通うので、"
+        "市区町村をまたがず自市内で数える。",
         unit="施設/万人",
         formula="一般診療所数 ÷ 総人口 × 10000",
         inputs=("clinics", "pop_total"),
     ),
+    # 医師・病院は入院や専門受診で車を使う先なので、市境をまたいで数える
     MetricSpec(
-        "hospitals_per_10k", "病院の密度", True, "medical",
-        "人口1万人あたりの病院数。入院や救急の受け皿。",
+        "doctors_catchment", "医師の密度（15km圏）", True, "medical",
+        "半径15km圏の医師数を、同じ圏内の人口で割った値。"
+        "自市内に少なくても隣の市の病院に行ける、という実態を反映する。",
+        unit="人/万人",
+        formula="Σ(15km圏内の医師数) ÷ Σ(15km圏内の人口) × 10000",
+    ),
+    MetricSpec(
+        "hospitals_catchment", "病院の密度（15km圏）", True, "medical",
+        "半径15km圏の病院数を、同じ圏内の人口で割った値。入院や救急の受け皿。",
         unit="施設/万人",
-        formula="病院数 ÷ 総人口 × 10000",
-        inputs=("hospitals", "pop_total"),
+        formula="Σ(15km圏内の病院数) ÷ Σ(15km圏内の人口) × 10000",
     ),
 
     # --- 住環境のゆとり ---------------------------------------------------
@@ -183,7 +185,8 @@ DIMENSIONS: dict[str, dict[str, Any]] = {
     "medical": {
         "short_label": "医療",
         "label": "医療アクセス",
-        "description": "医師・診療所・病院の密度。乳幼児期に最も効く。",
+        "description": "かかりつけ医は自市内の密度、医師と病院は15km圏で数える。"
+        "自市内に少なくても隣の市に行ける実態を反映するため。",
         "default_weight": 0.15,
     },
     "living": {

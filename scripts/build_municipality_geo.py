@@ -1,5 +1,11 @@
 """市区町村の代表点（緯度経度）を data/municipality_geo.csv に書き出す。
 
+対象8都県（role=target）に加えて、隣接県（role=neighbor）の代表点も出す。
+医療の圏内集計で、県境の自治体の圏内が削られるのを防ぐため。
+隣接自治体は座標だけあれば「そこに自治体がある」ことが分かるので、
+統計を取得していなくても過小評価の検出には使える。
+
+
 都心へのアクセスを測るには市区町村の位置が要る。e-Stat も不動産情報ライブラリも
 座標を返さないため、住所オープンデータ（geolonia/japanese-addresses）の
 大字町丁目の座標から市区町村ごとの代表点を求めている。
@@ -28,7 +34,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
 import duckdb  # noqa: E402
 
-from config import DUCKDB_FILE  # noqa: E402
+from config import DUCKDB_FILE, NEIGHBOR_PREFECTURE_CODES  # noqa: E402
 
 SOURCE_URL = (
     "https://raw.githubusercontent.com/geolonia/japanese-addresses/"
@@ -71,9 +77,11 @@ def main() -> int:
     _log(f"  {len(payload) / 1_000_000:.0f} MB")
 
     points: dict[str, list[tuple[float, float]]] = {}
+    labels: dict[str, tuple[str, str]] = {}
     for row in csv.DictReader(io.StringIO(payload)):
         code = row["市区町村コード"]
-        if code not in targets:
+        is_neighbor = code[:2] in NEIGHBOR_PREFECTURE_CODES
+        if code not in targets and not is_neighbor:
             continue
         try:
             lat, lon = float(row["緯度"]), float(row["経度"])
@@ -84,13 +92,23 @@ def main() -> int:
         if not (LON_RANGE[0] < lon < LON_RANGE[1]):
             continue
         points.setdefault(code, []).append((lat, lon))
+        labels.setdefault(code, (row["都道府県名"], row["市区町村名"]))
+
+    def centroid(code: str) -> tuple[float, float] | None:
+        """町丁目の座標の中央値。平均でない理由は冒頭のとおり。"""
+        group = points.get(code)
+        if not group:
+            return None
+        return (
+            round(statistics.median(p[0] for p in group), 6),
+            round(statistics.median(p[1] for p in group), 6),
+        )
 
     rows = []
     for code, (prefecture, name) in targets.items():
-        if code in points:
-            group = points[code]
-            latitude = round(statistics.median(p[0] for p in group), 6)
-            longitude = round(statistics.median(p[1] for p in group), 6)
+        found = centroid(code)
+        if found:
+            latitude, longitude = found
             source = "geolonia"
         elif code in MANUAL_POINTS:
             latitude, longitude = MANUAL_POINTS[code]
@@ -98,18 +116,32 @@ def main() -> int:
         else:
             _log(f"  座標を決められません: {code} {name}")
             continue
-        rows.append((code, prefecture, name, latitude, longitude, source))
+        rows.append((code, prefecture, name, latitude, longitude, "target", source))
+
+    neighbors = 0
+    for code, (prefecture, name) in sorted(labels.items()):
+        if code in targets:
+            continue
+        found = centroid(code)
+        if not found:
+            continue
+        rows.append((code, prefecture, name, found[0], found[1], "neighbor", "geolonia"))
+        neighbors += 1
 
     with open(OUTPUT_PATH, "w", encoding="utf-8", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(
             ["municipality_code", "prefecture_name", "municipality_name",
-             "latitude", "longitude", "source"]
+             "latitude", "longitude", "role", "source"]
         )
         writer.writerows(rows)
 
-    _log(f"{OUTPUT_PATH} に {len(rows)} / {len(targets)} 件を書き出しました")
-    return 0 if len(rows) == len(targets) else 1
+    written_targets = sum(1 for row in rows if row[5] == "target")
+    _log(
+        f"{OUTPUT_PATH} に対象 {written_targets} / {len(targets)} 件、"
+        f"隣接県 {neighbors} 件を書き出しました"
+    )
+    return 0 if written_targets == len(targets) else 1
 
 
 if __name__ == "__main__":

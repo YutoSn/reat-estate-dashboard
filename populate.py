@@ -25,7 +25,8 @@ from config import (
     TARGET_YEARS,
     current_year,
 )
-from src.analysis.geo import municipality_points
+from src.analysis.catchment import NEIGHBOR_INDICATORS
+from src.analysis.geo import municipality_points, neighbor_point_codes
 from src.analysis.metrics import build_metric_table
 from src.analysis.scoring import composite_score, score_table, scores_to_long
 from src.db.duckdb_manager import DuckDBManager
@@ -96,7 +97,13 @@ def populate_stats(db: DuckDBManager, api: EStatAPI) -> None:
     _log(f"e-Stat 統計を取得中（{len(INDICATORS)} 指標）...")
 
     # マスタに載っている自治体だけを残す（政令市の市レベル等の集計行を除く）
-    valid_codes = {row["municipality_code"] for row in db.get_cities_all()}
+    target_codes = {row["municipality_code"] for row in db.get_cities_all()}
+    # 隣接県は医療の圏内集計にだけ使うので、そのために要る指標だけ残す。
+    # e-Stat は指標ごとに全国を返すため、追加のリクエストは発生しない。
+    neighbor_codes = neighbor_point_codes()
+    if neighbor_codes:
+        _log(f"  隣接県 {len(neighbor_codes)} 自治体を圏内集計用に保存します")
+
     frames = []
 
     for index, indicator in enumerate(INDICATORS, start=1):
@@ -106,11 +113,13 @@ def populate_stats(db: DuckDBManager, api: EStatAPI) -> None:
             _log(f"  [{index}/{len(INDICATORS)}] {indicator.key}: 取得失敗 {exc}")
             continue
 
+        keep_neighbors = indicator.key in NEIGHBOR_INDICATORS
         rows = []
         for record in records:
             code = str(record.get("@area", ""))
-            if code not in valid_codes:
-                continue
+            if code not in target_codes:
+                if not (keep_neighbors and code in neighbor_codes):
+                    continue
             value = parse_value(record.get("$"))
             year = parse_year(record.get("@time"))
             if value is None or year is None:

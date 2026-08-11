@@ -8,7 +8,8 @@ from typing import Any
 
 import pandas as pd
 
-from src.analysis.geo import access_distances
+from src.analysis.catchment import build_points, catchment_table
+from src.analysis.geo import access_distances, municipality_points
 
 # 指標ごとの「使える鮮度」の上限（年）。これより古い値しかなければ欠測扱い。
 DEFAULT_MAX_AGE = 12
@@ -153,9 +154,11 @@ def derive_metrics(
     metrics["fiscal_index"] = val("fiscal_index")
 
     # --- 医療アクセス -----------------------------------------------------
+    # 自市内の密度。診療所（かかりつけ）は近さが効くのでこちらで評価する。
     metrics["doctors_per_10k"] = _safe_ratio(val("doctors"), pop_total, 10000)
     metrics["clinics_per_10k"] = _safe_ratio(val("clinics"), pop_total, 10000)
     metrics["hospitals_per_10k"] = _safe_ratio(val("hospitals"), pop_total, 10000)
+    # 圏内の密度（医師・病院）は build_metric_table 側で市区町村をまたいで集計する
 
     # --- 安全 -------------------------------------------------------------
     metrics["crimes_per_10k"] = _safe_ratio(val("crimes"), pop_total, 10000)
@@ -315,7 +318,50 @@ def build_metric_table(
         metrics["municipality_code"] = code
         rows.append(metrics)
 
-    return pd.DataFrame(rows).set_index("municipality_code")
+    table = pd.DataFrame(rows).set_index("municipality_code")
+
+    # 市区町村をまたいだ「行ける範囲」の医療供給を足す。
+    # 自市内で割ると、隣の市の病院に15分で行ける実態が落ちるため。
+    catchment = _build_catchment(all_stats, city_codes, reference_year)
+    if not catchment.empty:
+        table = table.join(catchment)
+
+    return table
+
+
+CATCHMENT_SUPPLY = ["doctors", "hospitals"]
+
+
+def _build_catchment(
+    all_stats: pd.DataFrame, city_codes: list[str], reference_year: int | None
+) -> pd.DataFrame:
+    """圏内の医療供給を集計する。隣接県も座標があれば地点として数える。"""
+    points = municipality_points()
+    if not points or all_stats.empty:
+        return pd.DataFrame()
+
+    wide = all_stats.pivot_table(
+        index=["municipality_code", "year"], columns="indicator",
+        values="value", aggfunc="first",
+    )
+
+    population: dict[str, float | None] = {}
+    supply: dict[str, dict[str, float | None]] = {}
+    for code in points:
+        if code not in wide.index.get_level_values(0):
+            continue
+        group = wide.xs(code, level=0)
+        pop = latest_value(group, "pop_total", reference_year=reference_year)[0]
+        if pop is None:
+            pop = latest_value(group, "pop_census", reference_year=reference_year)[0]
+        population[code] = pop
+        supply[code] = {
+            key: latest_value(group, key, reference_year=reference_year)[0]
+            for key in CATCHMENT_SUPPLY
+        }
+
+    all_points = build_points(list(points), points, population, supply)
+    return catchment_table(city_codes, all_points, CATCHMENT_SUPPLY)
 
 
 def _land_price_change_map(price_history: pd.DataFrame) -> dict[str, float]:

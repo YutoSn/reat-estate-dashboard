@@ -1259,9 +1259,11 @@ function renderHighlights(metrics, fit) {
       note: '少ないほど手厚い',
     },
     {
-      label: '医師（人口1万人あたり）',
-      value: metrics.doctors_per_10k ? `${fmt(metrics.doctors_per_10k, 1)}人` : '—',
-      note: '乳幼児期に効く',
+      label: '医師（15km圏・1万人あたり）',
+      value: metrics.doctors_catchment ? `${fmt(metrics.doctors_catchment, 1)}人` : '—',
+      note: metrics.doctors_per_10k
+        ? `自市内だけなら ${fmt(metrics.doctors_per_10k, 1)}人`
+        : '隣接自治体を含めた圏内で数えています',
     },
     {
       label: '2050年までの人口見通し',
@@ -1549,8 +1551,17 @@ function renderMetrics(metrics, years) {
     ['教員1人あたり児童数', fmt(metrics.pupils_per_teacher, 1) + '人', years.elem_teachers],
     ['子ども1人あたり児童福祉費', fmtYen(metrics.child_welfare_per_child), years.child_welfare_exp],
     ['財政力指数', fmt(metrics.fiscal_index, 2), years.fiscal_index],
-    ['医師密度', fmt(metrics.doctors_per_10k, 1) + '人/万人', years.doctors],
-    ['診療所密度', fmt(metrics.clinics_per_10k, 1) + '施設/万人', years.clinics],
+    ['医師密度（自市内）', fmt(metrics.doctors_per_10k, 1) + '人/万人', years.doctors],
+    ['医師密度（15km圏）', fmt(metrics.doctors_catchment, 1) + '人/万人', '圏内で集計'],
+    ['病院密度（15km圏）', fmt(metrics.hospitals_catchment, 2) + '施設/万人', '圏内で集計'],
+    [
+      '15km圏内の自治体数',
+      fmt(metrics.catchment_municipalities) + '自治体'
+        + (metrics.catchment_missing
+          ? `（うち${fmt(metrics.catchment_missing)}は統計未取得）` : ''),
+      metrics.catchment_missing ? '県外を含むため過小の可能性' : '圏内すべて集計済み',
+    ],
+    ['診療所密度（自市内）', fmt(metrics.clinics_per_10k, 1) + '施設/万人', years.clinics],
     ['一戸建比率', fmt(metrics.detached_ratio, 1) + '%', years.dwellings_occupied],
     ['持ち家比率', fmt(metrics.ownership_ratio, 1) + '%', years.dwellings_occupied],
     ['社会増減', fmtSigned(metrics.net_migration_rate, 1) + '人/千人', years.pop_total],

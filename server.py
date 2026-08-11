@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from config import (
     BALANCE_MODEL,
     BUDGET_MODEL,
+    CATCHMENT_RADIUS_KM,
     DUCKDB_FILE,
     REGIONAL_HUBS,
     STATS_HISTORY_YEARS,
@@ -200,6 +201,30 @@ def get_municipality(city_code: str):
     trend_records = _stats_trend_records(stats)
 
     scores = _scores_for(city_code)
+
+    # 圏内の集計は全市区町村をまたぐ計算なので、1市区町村を見る derive_metrics では
+    # 出せない。populate 時に保存した実数から補う。
+    for spec in METRIC_SPECS:
+        if metrics.get(spec.key) is None:
+            metrics[spec.key] = scores.get(f"raw_{spec.key}")
+    # 圏内の内訳（スコアには使わないが、集計の透明性のために画面に出す）
+    for key in ("catchment_municipalities", "catchment_missing"):
+        metrics[key] = scores.get(f"raw_{key}")
+
+    covered = metrics["catchment_municipalities"]
+    missing = metrics["catchment_missing"]
+    if covered is not None:
+        entries = [
+            {"label": f"{CATCHMENT_RADIUS_KM}km圏内の自治体数",
+             "value": covered, "unit": "自治体", "year": None},
+        ]
+        if missing:
+            entries.append(
+                {"label": "うち統計が未取得（圏内から除外）",
+                 "value": missing, "unit": "自治体", "year": None}
+            )
+        for key in ("doctors_catchment", "hospitals_catchment"):
+            extra_inputs.setdefault(key, []).extend(entries)
 
     # 各指標の計算に使った統計値を、観測年つきでそのまま返す。
     # 「住環境が低いのはなぜか」を、指標 → 元の統計値までたどれるようにするため。
