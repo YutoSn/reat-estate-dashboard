@@ -18,13 +18,17 @@
 
 import csv
 import io
+import pathlib
 import statistics
 import sys
 import urllib.request
 
-import duckdb
+# scripts/ から実行すると sys.path はこのディレクトリになるので、リポジトリ直下を足す
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent))
 
-from config import DUCKDB_FILE
+import duckdb  # noqa: E402
+
+from config import DUCKDB_FILE  # noqa: E402
 
 SOURCE_URL = (
     "https://raw.githubusercontent.com/geolonia/japanese-addresses/"
