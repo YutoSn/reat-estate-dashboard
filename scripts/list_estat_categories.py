@@ -55,6 +55,10 @@ def main() -> int:
         print(str(meta)[:500])
         return 1
 
+    # e-Stat は要素が1つだと配列でなく単体で返す
+    if isinstance(classes, dict):
+        classes = [classes]
+
     for class_obj in classes:
         if class_obj.get("@id") != "cat01":
             continue
