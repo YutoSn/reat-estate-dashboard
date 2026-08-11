@@ -390,6 +390,9 @@ input[type="range"]::-moz-range-thumb {
   gap: 1rem;
 }
 .chart-figure { margin: 0; }
+/* パネル見出しの右に置く小さなセレクト */
+.inline-field { flex-direction: row; align-items: center; gap: .45rem; }
+.inline-field .select { min-width: 0; }
 .chart-figure figcaption {
   font-size: .8rem;
   font-weight: 600;

@@ -77,6 +77,20 @@ def _records(df: pd.DataFrame) -> list[dict[str, Any]]:
     ]
 
 
+def _stats_trend_records(stats: pd.DataFrame) -> list[dict[str, Any]]:
+    """統計の推移を、表示年数ぶんだけ切り出して返す。"""
+    if stats.empty:
+        return []
+    cutoff = current_year() - STATS_HISTORY_YEARS
+    trend = stats[stats.index >= cutoff]
+    records = []
+    for year, row in trend.iterrows():
+        record = {"year": int(year)}
+        record.update({k: _clean(v) for k, v in row.items()})
+        records.append(record)
+    return records
+
+
 def _price_records(df: pd.DataFrame) -> list[dict[str, Any]]:
     """価格推移に、集計途中の年かどうかの印をつける。
 
@@ -183,15 +197,7 @@ def get_municipality(city_code: str):
     observation_years = metrics.pop("_years", {})
     extra_inputs = metrics.pop("_extra_inputs", {})
 
-    # 統計の推移（表示年数を絞る）
-    cutoff = current_year() - STATS_HISTORY_YEARS
-    trend = stats[stats.index >= cutoff] if not stats.empty else pd.DataFrame()
-    trend_records = []
-    if not trend.empty:
-        for year, row in trend.iterrows():
-            record = {"year": int(year)}
-            record.update({k: _clean(v) for k, v in row.items()})
-            trend_records.append(record)
+    trend_records = _stats_trend_records(stats)
 
     scores = _scores_for(city_code)
 
@@ -290,7 +296,9 @@ def compare(codes: str = Query(..., description="カンマ区切りの市区町�
                 "child_projection": project_child_population(
                     stats, birth_year=_birth_year()
                 ),
+                # 推移は選んだ市区町村ぶんを1枚に重ねて描くので、ここでまとめて返す
                 "price_trend": _price_records(db.get_price_trend(code)),
+                "stats_trend": _stats_trend_records(stats),
             }
         )
     return results

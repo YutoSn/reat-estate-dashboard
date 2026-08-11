@@ -15,6 +15,9 @@ const state = {
   districtCache: new Map(),
   cityNames: new Map(),
   charts: {},
+  // 推移グラフの表示。実額のままだと水準差の大きい市区町村が重ねられない。
+  trendMode: 'absolute',
+  lastTrendData: null,
   // 弱点の扱い。floor を下回った観点があるぶんだけ総合点から引く。
   balance: {
     floor: 50,
@@ -149,6 +152,7 @@ async function init() {
   await loadRanking();
 
   setupDetailView();
+  setupTrendControls();
 }
 
 function setupTabs() {
@@ -1058,18 +1062,34 @@ async function renderSelection() {
   if (state.selectedCodes.length === 0) {
     detailBody.hidden = true;
     compare.hidden = true;
+    document.getElementById('trend-panel').hidden = true;
+    document.getElementById('pop-panel').hidden = true;
     empty.hidden = false;
     return;
   }
   empty.hidden = true;
 
-  // 比較は2件以上のときだけ。1件で比較表を出しても読むものが無い。
-  if (state.selectedCodes.length >= 2) {
-    await renderComparison();
+  // 比較表とレーダーは2件以上のときだけ。1件で出しても読むものが無い。
+  // 推移のグラフは1件でも出す（重ねる相手が増えるだけ）。
+  const requested = state.selectedCodes.join(',');
+  const data = await api(`/api/compare?codes=${requested}`);
+  // 取得を待つあいだに選択が変わっていたら、古い結果は描かない
+  if (state.selectedCodes.join(',') !== requested) return;
+
+  // 並びを選択順に揃える。チップ・レーダー・表・推移で色と順序がずれると読めない。
+  const ordered = state.selectedCodes
+    .map((code) => data.find((item) => item.municipality.municipality_code === code))
+    .filter(Boolean);
+
+  if (ordered.length >= 2) {
+    compare.hidden = false;
+    renderCompareRadar(ordered);
+    renderCompareTable(ordered);
   } else {
     compare.hidden = true;
     destroyChart('compareRadar');
   }
+  renderTrends(ordered);
 
   if (state.focusCode) await loadDetail(state.focusCode);
 }
@@ -1141,8 +1161,7 @@ async function loadDetail(cityCode) {
   renderHighlights(metrics, fit);
   renderBreakdown(data.score_breakdown, fit, detail);
   renderTimeline(data.child_projection, data.stages);
-  renderPriceChart(data.price_trend);
-  renderPopChart(data.stats_trend);
+  // 価格と人口の推移は、選んだ市区町村を重ねて renderTrends が描く
   renderDistricts(districts);
   renderMetrics(metrics, years);
 }
@@ -1305,41 +1324,45 @@ function renderTimeline(projection, stages) {
  * 「単価が戸建て価格を追い越した」といった意味のない読み取りを誘う。
  * 単位が違うものは軸を分けずにグラフを分ける。
  */
-function renderLineChart(
-  key, canvasId, { labels, data, color, axisTitle, axisTick, valueLabel },
-) {
+function renderLineChart(key, canvasId, { labels, series, axisTitle, axisTick, valueLabel }) {
   destroyChart(key);
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
+
+  // 1本のときだけ面を塗る。重ねたときに塗ると下の線が読めなくなる。
+  const filled = series.length === 1;
 
   state.charts[key] = new Chart(canvas, {
     type: 'line',
     data: {
       labels,
-      datasets: [
-        {
-          data,
-          borderColor: color,
-          backgroundColor: withAlpha(color, 0.12),
-          borderWidth: 2,
-          pointRadius: 0,
-          pointHoverRadius: 5,
-          spanGaps: true,
-          tension: 0.25,
-          fill: true,
-        },
-      ],
+      datasets: series.map((item, index) => ({
+        label: item.label,
+        data: item.data,
+        borderColor: seriesColor(index),
+        backgroundColor: filled
+          ? withAlpha(seriesColor(index), 0.12)
+          : seriesColor(index),
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 5,
+        spanGaps: true,
+        tension: 0.25,
+        fill: filled,
+      })),
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      // 系列が1本なので凡例は不要。見出しがその役割を果たす。
       plugins: {
-        legend: { display: false },
+        // 1本のときは見出しが系列名を兼ねるので凡例は出さない
+        legend: { display: series.length > 1, position: 'top' },
         tooltip: {
           mode: 'index',
           intersect: false,
-          callbacks: { label: (item) => valueLabel(item.parsed.y) },
+          callbacks: {
+            label: (item) => `${item.dataset.label}: ${valueLabel(item.parsed.y)}`,
+          },
         },
       },
       interaction: { mode: 'index', intersect: false },
@@ -1355,51 +1378,139 @@ function renderLineChart(
   });
 }
 
-function renderPriceChart(trend) {
-  // 集計途中の年は件数が数分の一しかなく、末尾が急落したように見えるので除く
-  const rows = (trend || [])
-    .filter((r) => !r.is_partial)
-    .filter((r) => r.land_unit_price || r.house_price);
-  const labels = rows.map((r) => r.year);
+/**
+ * 市区町村ごとの年次データを、共通の年軸に載せ替える。
+ *
+ * 市区町村によって取れている年が違うので、そのまま並べると同じ位置が
+ * 別の年を指してしまう。年の和集合を作り、無い年は null（線を継ぐ）にする。
+ */
+function alignByYear(items, pick) {
+  const years = new Set();
+  items.forEach((item) => item.rows.forEach((row) => years.add(row.year)));
+  const labels = [...years].sort((a, b) => a - b);
 
-  renderLineChart('price', 'price-chart', {
-    labels,
-    data: rows.map((r) => r.land_unit_price),
-    color: seriesColor(0),
-    axisTitle: '万円/㎡',
-    axisTick: (v) => fmt(v / 10000, 1),
-    valueLabel: (v) => `${fmt(v / 10000, 1)}万円/㎡`,
+  const series = items.map((item) => {
+    const byYear = new Map(item.rows.map((row) => [row.year, row]));
+    return {
+      label: item.label,
+      data: labels.map((year) => pick(byYear.get(year)) ?? null),
+    };
   });
-  renderLineChart('priceHouse', 'price-house-chart', {
+  return { labels, series };
+}
+
+/**
+ * 各系列を「共通の基準年＝100」の指数に直す。
+ *
+ * 渋谷区170万円/㎡ とつくば市3.3万円/㎡ を実額で重ねると、安い側が軸の
+ * 底に張り付いて動きが読めない。水準ではなく伸び方を比べたいときのために、
+ * 全系列に値がある最も古い年を基準に揃える。
+ * 共通の年が無いときは各系列の最初の年を使う（伸び方の比較としては落ちる）。
+ */
+function toIndexed(labels, series) {
+  const common = labels.findIndex(
+    (_, i) => series.every((s) => s.data[i] !== null && s.data[i] !== 0),
+  );
+
+  const indexed = series.map((s) => {
+    const at = common >= 0 ? common : s.data.findIndex((v) => v !== null && v !== 0);
+    const base = at >= 0 ? s.data[at] : null;
+    return {
+      label: s.label,
+      data: base
+        ? s.data.map((v) => (v === null ? null : (v / base) * 100))
+        : s.data.map(() => null),
+    };
+  });
+  return { series: indexed, baseYear: common >= 0 ? labels[common] : null };
+}
+
+/** 実額と指数を切り替える。指数のときは軸のタイトルと書式も差し替える。 */
+function trendChartArgs({ labels, series }, { axisTitle, axisTick, valueLabel }) {
+  if (state.trendMode !== 'indexed') {
+    return { labels, series, axisTitle, axisTick, valueLabel };
+  }
+  const { series: indexed, baseYear } = toIndexed(labels, series);
+  return {
     labels,
-    data: rows.map((r) => r.house_price),
-    color: seriesColor(1),
-    axisTitle: '万円',
-    axisTick: (v) => fmt(v / 10000),
-    valueLabel: (v) => `${fmt(v / 10000)}万円`,
+    series: indexed,
+    axisTitle: baseYear ? `${baseYear}年=100` : '最初の年=100',
+    axisTick: (v) => fmt(v),
+    valueLabel: (v) => fmt(v, 1),
+  };
+}
+
+function setupTrendControls() {
+  document.querySelectorAll('.trend-mode').forEach((select) => {
+    [['absolute', '実額'], ['indexed', '変化（基準年=100）']].forEach(([value, label]) => {
+      const option = el('option', null, label);
+      option.value = value;
+      select.append(option);
+    });
+    select.value = state.trendMode;
+    select.addEventListener('change', () => {
+      state.trendMode = select.value;
+      // 2つのパネルで同じ状態を出しているので、もう一方も合わせる
+      document.querySelectorAll('.trend-mode').forEach((other) => {
+        other.value = state.trendMode;
+      });
+      if (state.lastTrendData) renderTrends(state.lastTrendData);
+    });
   });
 }
 
-function renderPopChart(trend) {
-  const rows = (trend || []).filter((r) => r.pop_total || r.pop_0_14);
-  const labels = rows.map((r) => r.year);
+/** 選んだ市区町村の価格・人口の推移を、それぞれ1枚に重ねて描く。 */
+function renderTrends(data) {
+  state.lastTrendData = data;
+  const items = data.map((item) => ({
+    label: item.municipality.municipality_name,
+    // 集計途中の年は件数が数分の一しかなく、末尾が急落したように見えるので除く
+    price: (item.price_trend || []).filter((row) => !row.is_partial),
+    stats: item.stats_trend || [],
+  }));
 
-  renderLineChart('pop', 'pop-chart', {
-    labels,
-    data: rows.map((r) => r.pop_total ?? r.pop_census ?? null),
-    color: seriesColor(0),
-    axisTitle: '万人',
-    axisTick: (v) => fmt(v / 10000, 1),
-    valueLabel: (v) => `${fmt(v)}人`,
-  });
-  renderLineChart('popYoung', 'pop-young-chart', {
-    labels,
-    data: rows.map((r) => r.pop_0_14 ?? null),
-    color: seriesColor(1),
-    axisTitle: '万人',
-    axisTick: (v) => fmt(v / 10000, 1),
-    valueLabel: (v) => `${fmt(v)}人`,
-  });
+  const price = (pick) => alignByYear(
+    items.map((item) => ({ label: item.label, rows: item.price })), pick,
+  );
+  const stats = (pick) => alignByYear(
+    items.map((item) => ({ label: item.label, rows: item.stats })), pick,
+  );
+
+  document.getElementById('trend-panel').hidden = false;
+  renderLineChart('price', 'price-chart', trendChartArgs(
+    price((row) => row?.land_unit_price),
+    {
+      axisTitle: '万円/㎡',
+      axisTick: (v) => fmt(v / 10000, 1),
+      valueLabel: (v) => `${fmt(v / 10000, 1)}万円/㎡`,
+    },
+  ));
+  renderLineChart('priceHouse', 'price-house-chart', trendChartArgs(
+    price((row) => row?.house_price),
+    {
+      axisTitle: '万円',
+      axisTick: (v) => fmt(v / 10000),
+      valueLabel: (v) => `${fmt(v / 10000)}万円`,
+    },
+  ));
+
+  document.getElementById('pop-panel').hidden = false;
+  renderLineChart('pop', 'pop-chart', trendChartArgs(
+    stats((row) => row?.pop_total ?? row?.pop_census),
+    {
+      axisTitle: '万人',
+      axisTick: (v) => fmt(v / 10000, 1),
+      valueLabel: (v) => `${fmt(v)}人`,
+    },
+  ));
+  renderLineChart('popYoung', 'pop-young-chart', trendChartArgs(
+    stats((row) => row?.pop_0_14),
+    {
+      axisTitle: '万人',
+      axisTick: (v) => fmt(v / 10000, 1),
+      valueLabel: (v) => `${fmt(v)}人`,
+    },
+  ));
 }
 
 function renderDistricts(districts) {
@@ -1465,22 +1576,6 @@ function renderMetrics(metrics, years) {
 }
 
 // ---------------------------------------------------------------- 比較
-async function renderComparison() {
-  const result = document.getElementById('compare-result');
-  const requested = state.selectedCodes.join(',');
-  const data = await api(`/api/compare?codes=${requested}`);
-  // 取得を待つあいだに選択が変わっていたら、古い結果は描かない
-  if (state.selectedCodes.join(',') !== requested) return;
-  // 選択順と並びを合わせる。チップ・レーダー・表で色と順序がずれると読めない。
-  const ordered = state.selectedCodes
-    .map((code) => data.find((item) => item.municipality.municipality_code === code))
-    .filter(Boolean);
-
-  result.hidden = false;
-  renderCompareRadar(ordered);
-  renderCompareTable(ordered);
-}
-
 function renderCompareRadar(data) {
   destroyChart('compareRadar');
   const canvas = document.getElementById('compare-radar');

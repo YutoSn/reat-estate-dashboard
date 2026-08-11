@@ -197,6 +197,53 @@
         </div>
       </div>
 
+      <div class="panel" id="trend-panel" hidden>
+        <div class="panel-head">
+          <h2>価格の推移</h2>
+          <label class="field inline-field">
+            <span>表示</span>
+            <select class="select trend-mode"></select>
+          </label>
+        </div>
+        <p class="panel-note">
+          選んだ市区町村を重ねて表示しています。住宅地の <strong>土地のみ</strong> の
+          取引から求めた㎡単価の中央値です。マンションや建物付き取引は単価の意味が
+          変わるため分けて集計しています。単位が違うので、㎡単価と戸建て価格は
+          1枚に重ねず横に並べています。
+        </p>
+        <div class="chart-stack">
+          <figure class="chart-figure">
+            <figcaption>土地の㎡単価（住宅地・中央値）</figcaption>
+            <div class="chart-box tall"><canvas id="price-chart"></canvas></div>
+          </figure>
+          <figure class="chart-figure">
+            <figcaption>戸建て（土地と建物）の取引価格（中央値）</figcaption>
+            <div class="chart-box tall"><canvas id="price-house-chart"></canvas></div>
+          </figure>
+        </div>
+      </div>
+
+      <div class="panel" id="pop-panel" hidden>
+        <div class="panel-head">
+          <h2>人口の推移</h2>
+          <label class="field inline-field">
+            <span>表示</span>
+            <select class="select trend-mode"></select>
+          </label>
+        </div>
+        <p class="panel-note">選んだ市区町村を重ねて表示しています。</p>
+        <div class="chart-stack">
+          <figure class="chart-figure">
+            <figcaption>総人口</figcaption>
+            <div class="chart-box tall"><canvas id="pop-chart"></canvas></div>
+          </figure>
+          <figure class="chart-figure">
+            <figcaption>15歳未満人口</figcaption>
+            <div class="chart-box tall"><canvas id="pop-young-chart"></canvas></div>
+          </figure>
+        </div>
+      </div>
+
       <div id="detail-body" hidden>
         <div class="panel hero-panel">
           <div class="hero-head">
@@ -238,39 +285,6 @@
             残存率が1を超える街は、子育て世帯が転入してくる街です。
           </p>
           <div class="timeline" id="detail-timeline"></div>
-        </div>
-
-        <div class="panel">
-          <h2>価格の推移</h2>
-          <p class="panel-note">
-            住宅地の <strong>土地のみ</strong> の取引から求めた㎡単価の中央値です。
-            マンションや建物付き取引は単価の意味が変わるため分けて集計しています。
-            単位が違うので、1枚に重ねず縦に並べています。
-          </p>
-          <div class="chart-stack">
-            <figure class="chart-figure">
-              <figcaption>土地の㎡単価（住宅地・中央値）</figcaption>
-              <div class="chart-box"><canvas id="price-chart"></canvas></div>
-            </figure>
-            <figure class="chart-figure">
-              <figcaption>戸建て（土地と建物）の取引価格（中央値）</figcaption>
-              <div class="chart-box"><canvas id="price-house-chart"></canvas></div>
-            </figure>
-          </div>
-        </div>
-
-        <div class="panel">
-          <h2>人口の推移</h2>
-          <div class="chart-stack">
-            <figure class="chart-figure">
-              <figcaption>総人口</figcaption>
-              <div class="chart-box"><canvas id="pop-chart"></canvas></div>
-            </figure>
-            <figure class="chart-figure">
-              <figcaption>15歳未満人口</figcaption>
-              <div class="chart-box"><canvas id="pop-young-chart"></canvas></div>
-            </figure>
-          </div>
         </div>
 
         <div class="panel">
