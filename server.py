@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import (
+    BALANCE_MODEL,
     BUDGET_MODEL,
     DUCKDB_FILE,
     REGIONAL_HUBS,
@@ -112,6 +113,7 @@ def get_meta():
         ],
         # 世帯年収から予算を出すときの前提。フロントはここを唯一の定義として使う。
         "budget_model": BUDGET_MODEL,
+        "balance_model": BALANCE_MODEL,
         "access": {
             "tokyo_center": TOKYO_CENTER[0],
             "hubs": [name for name, _, _ in REGIONAL_HUBS],

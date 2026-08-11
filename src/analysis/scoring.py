@@ -9,6 +9,7 @@ from typing import Any, NamedTuple
 
 import pandas as pd
 
+from config import BALANCE_MODEL
 from src.indicators import INDICATOR_BY_KEY
 
 
@@ -241,29 +242,69 @@ def score_table(metric_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def composite_score(
-    scores: pd.DataFrame, weights: dict[str, float] | None = None
+    scores: pd.DataFrame,
+    weights: dict[str, float] | None = None,
+    floor: float | None = None,
+    penalty_per_point: float | None = None,
 ) -> pd.Series:
     """観点別スコアを重み付けして総合点にする。
 
     重みはUIから変更できる。何を重視するかは家庭ごとに違うため、
     単一の「正解の総合点」を押し付けない設計にしている。
+
+    加重平均のあとに **弱点補正** を掛ける。平均だけで並べると、5観点が80点でも
+    1観点が20点の街が、全観点60点台の街より上に来てしまう。家を建てて15年住む
+    場所としては、突出した強みより決定的に困る点が無いことの方が効くため、
+    最も低い観点が基準点を下回っているぶんだけ総合点から差し引く。
+
+    差し引く量を「下回った点数 × 係数」にしているのは、基準点をまたいだ瞬間に
+    順位が飛ぶのを避けるため。49点と51点の街の扱いが連続的になる。
     """
     active = weights or {k: v["default_weight"] for k, v in DIMENSIONS.items()}
+    if floor is None:
+        floor = BALANCE_MODEL["floor"]
+    if penalty_per_point is None:
+        penalty_per_point = BALANCE_MODEL["penalty_per_point"]
 
     total = pd.Series(0.0, index=scores.index)
     weight_sum = pd.Series(0.0, index=scores.index)
+    # 重みを掛けている観点だけを弱点判定の対象にする。
+    # 重み0はその観点を見ないという意思表示なので、低くても減点しない。
+    weighted_columns = []
 
     for dimension, weight in active.items():
         column = f"dim_{dimension}"
         if column not in scores.columns or weight <= 0:
             continue
+        weighted_columns.append(column)
         values = scores[column]
         mask = values.notna()
         total[mask] += values[mask] * weight
         weight_sum[mask] += weight
 
-    result = (total / weight_sum.replace(0, pd.NA)).round(1)
-    return result
+    result = total / weight_sum.replace(0, pd.NA)
+
+    if floor and penalty_per_point and weighted_columns:
+        weakest = scores[weighted_columns].min(axis=1, skipna=True)
+        shortfall = (floor - weakest).clip(lower=0).fillna(0)
+        result = (result - shortfall * penalty_per_point).clip(lower=0)
+
+    return result.round(1)
+
+
+def weakest_dimension(
+    scores: dict[str, Any], weights: dict[str, float] | None = None
+) -> tuple[str, float] | None:
+    """重みを掛けている観点のうち、最も点数の低いものを返す。"""
+    active = weights or {k: v["default_weight"] for k, v in DIMENSIONS.items()}
+    candidates = [
+        (dimension, scores[f"dim_{dimension}"])
+        for dimension, weight in active.items()
+        if weight > 0 and scores.get(f"dim_{dimension}") is not None
+    ]
+    if not candidates:
+        return None
+    return min(candidates, key=lambda pair: pair[1])
 
 
 def scores_to_long(scores: pd.DataFrame) -> pd.DataFrame:

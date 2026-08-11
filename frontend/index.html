@@ -92,6 +92,29 @@
         </p>
         <div class="weights" id="weights"></div>
 
+        <div class="balance">
+          <div class="balance-head">
+            <h3>弱点の扱い</h3>
+            <p class="panel-note">
+              加重平均だけで並べると、5つの観点が80点でも1つが20点の街が、
+              全観点60点台の街より上に来ます。15年住む場所としては、突出した強みより
+              <strong>決定的に困る点が無いこと</strong>が効くので、
+              基準点を下回った観点があるぶんだけ総合点から差し引きます。
+            </p>
+          </div>
+          <div class="balance-controls">
+            <label class="field">
+              <span>基準点</span>
+              <select id="balance-floor" class="select"></select>
+            </label>
+            <label class="checkbox">
+              <input type="checkbox" id="balance-exclude" />
+              <span>減点ではなく、基準を下回る市区町村をランキングから外す</span>
+            </label>
+          </div>
+          <p class="balance-note" id="balance-note"></p>
+        </div>
+
         <details class="logic">
           <summary>6つの観点のスコアはどう出しているか</summary>
           <div class="logic-body">

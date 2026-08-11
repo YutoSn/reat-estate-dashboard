@@ -9,6 +9,12 @@ const state = {
   prefectures: [],
   compareCodes: [],
   charts: {},
+  // 弱点の扱い。floor を下回った観点があるぶんだけ総合点から引く。
+  balance: {
+    floor: 50,
+    penaltyPerPoint: 0.5,
+    exclude: false,
+  },
   // 世帯年収から求める予算。income が未入力のあいだは価格の安さで評価する。
   budget: {
     income: null,
@@ -24,6 +30,7 @@ const state = {
 let DIMENSION_ORDER = [];
 
 const BUDGET_STORAGE_KEY = 'sumai-budget';
+const BALANCE_STORAGE_KEY = 'sumai-balance';
 
 const PALETTE = ['#1f6f5c', '#c96f3f', '#4a6fa5', '#8a5a83', '#5c8a4a', '#a5504a'];
 
@@ -83,6 +90,7 @@ async function init() {
   renderTimelineBanner();
   setupBudgetControls();
   renderWeightControls();
+  setupBalanceControls();
   renderScoreLogic();
   fillPrefectureSelects();
 
@@ -324,21 +332,120 @@ function renderBudgetSummary() {
   );
 }
 
-function loadStoredBudget() {
+function loadStored(key) {
   try {
-    const raw = window.localStorage.getItem(BUDGET_STORAGE_KEY);
+    const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
   }
 }
 
-function storeBudget() {
+function store(key, value) {
   try {
-    window.localStorage.setItem(BUDGET_STORAGE_KEY, JSON.stringify(state.budget));
+    window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
     // プライベートブラウジング等で保存できなくても動作には影響しない
   }
+}
+
+const loadStoredBudget = () => loadStored(BUDGET_STORAGE_KEY);
+const storeBudget = () => store(BUDGET_STORAGE_KEY, state.budget);
+const storeBalance = () => store(BALANCE_STORAGE_KEY, state.balance);
+
+// ---------------------------------------------------------------- 弱点補正
+function setupBalanceControls() {
+  const model = state.meta.balance_model;
+  state.balance.floor = model.floor;
+  state.balance.penaltyPerPoint = model.penalty_per_point;
+  state.balance.exclude = model.exclude_below_floor;
+  Object.assign(state.balance, loadStored(BALANCE_STORAGE_KEY));
+
+  const floorSelect = document.getElementById('balance-floor');
+  model.floor_options.forEach((value) => {
+    const option = el('option', null, value === 0 ? '補正しない' : `${value}点`);
+    option.value = String(value);
+    floorSelect.append(option);
+  });
+  floorSelect.value = String(state.balance.floor);
+
+  const exclude = document.getElementById('balance-exclude');
+  exclude.checked = state.balance.exclude;
+
+  // 説明文は件数を数え直す必要があるので renderRanking の側で更新する
+  const onChange = () => {
+    state.balance.floor = Number(floorSelect.value);
+    state.balance.exclude = exclude.checked;
+    exclude.disabled = state.balance.floor === 0;
+    storeBalance();
+    renderRanking();
+  };
+  floorSelect.addEventListener('change', onChange);
+  exclude.addEventListener('change', onChange);
+  exclude.disabled = state.balance.floor === 0;
+  renderBalanceNote();
+}
+
+/**
+ * 各基準点で何件が残るかを、いま表示しているランキングから数える。
+ *
+ * 観点どうしは構造的にぶつかる（都心に近いほど戸建て比率と価格の点は下がる）ので、
+ * 「全観点50点以上」は現実には1件も無い。基準点を選ぶときに、その基準で
+ * 何件残るのかが分からないと、0件のランキングを見せられて終わってしまう。
+ */
+function balanceStats() {
+  const mins = state.ranking
+    .map((row) => compositeDetail(row, budgetFit(row)))
+    .filter((detail) => detail && detail.weakest)
+    .map((detail) => detail.weakest.value);
+
+  const counts = {};
+  state.meta.balance_model.floor_options.forEach((floor) => {
+    counts[floor] = mins.filter((value) => value >= floor).length;
+  });
+  return { best: mins.length ? Math.max(...mins) : null, counts };
+}
+
+function renderBalanceNote() {
+  const note = document.getElementById('balance-note');
+  const { floor, penaltyPerPoint, exclude } = state.balance;
+  note.innerHTML = '';
+
+  if (!floor) {
+    note.textContent = '観点の加重平均をそのまま総合点にします。';
+    return;
+  }
+
+  if (exclude) {
+    const { best, counts } = balanceStats();
+    note.append(
+      el('span', null, `重みを掛けたどの観点も${floor}点以上の市区町村は `),
+    );
+    note.append(el('strong', null, `${fmt(counts[floor] ?? 0)}件`));
+    note.append(el('span', null, ' です。'));
+    if (best !== null) {
+      const usable = state.meta.balance_model.floor_options
+        .filter((value) => value > 0 && value < floor && (counts[value] ?? 0) > 0);
+      note.append(
+        el(
+          'span',
+          null,
+          `　いちばんバランスの良い市区町村でも最低の観点は${fmt(best, 0)}点です`
+            + `（観点どうしは構造的にぶつかるため、全観点で上位半分は成立しません）。`
+            + (usable.length
+              ? `${usable.map((v) => `${v}点なら${fmt(counts[v])}件`).join('、')}残ります。`
+              : ''),
+        ),
+      );
+    }
+    return;
+  }
+
+  const example = Math.round((floor - 20) * penaltyPerPoint);
+  note.textContent = `いちばん低い観点が${floor}点を1点下回るごとに、`
+    + `総合点から${penaltyPerPoint}点引きます`
+    + `（最低の観点が20点なら ${example}点の減点）。`
+    + `${floor}点以上ならそのままです。`;
 }
 
 // ------------------------------------------------------- スコアの出し方
@@ -384,10 +491,29 @@ function renderScoreLogic() {
 }
 
 /** 「詳しく見る」画面。観点ごとの点数を、指標と元の統計値まで開けるようにする。 */
-function renderBreakdown(breakdown, fit) {
+function renderBreakdown(breakdown, fit, detail) {
   const container = document.getElementById('detail-breakdown');
   container.innerHTML = '';
   if (!breakdown || breakdown.length === 0) return;
+
+  if (detail) {
+    const summary = el('p', `breakdown-total${detail.belowFloor ? ' is-penalized' : ''}`);
+    if (detail.belowFloor) {
+      const weak = state.meta.dimensions.find((d) => d.key === detail.weakest.key);
+      summary.textContent =
+        `観点の加重平均は ${fmt(detail.mean, 1)}点。`
+        + `${weak ? dimensionLabel(weak) : detail.weakest.key}が${fmt(detail.weakest.value, 0)}点で`
+        + `基準点${state.balance.floor}点を${fmt(detail.shortfall, 0)}点下回るため`
+        + `${fmt(detail.penalty, 1)}点引いて、総合 ${fmt(detail.composite, 1)}点です。`;
+    } else if (state.balance.floor) {
+      summary.textContent =
+        `観点の加重平均は ${fmt(detail.mean, 1)}点。`
+        + `どの観点も基準点${state.balance.floor}点を下回っていないので減点はありません。`;
+    } else {
+      summary.textContent = `観点の加重平均 ${fmt(detail.mean, 1)}点をそのまま総合点にしています。`;
+    }
+    container.append(summary);
+  }
 
   breakdown.forEach((dim) => {
     // 世帯年収を入れているときは、価格の点数ではなく予算適合の点数を出す
@@ -558,23 +684,51 @@ function renderWeightControls() {
 }
 
 /**
- * 観点別スコアを重み付けして総合点にする。
+ * 観点別スコアを重み付けし、弱点補正を掛けて総合点にする。
+ *
  * 世帯年収が入っているときだけ、「手が届きやすさ」を価格の安さではなく
  * その予算に対する適合度に差し替える。
+ *
+ * 内訳（平均・最低の観点・減点幅）も一緒に返す。総合点だけ出しても
+ * 「なぜこの順位なのか」が読めないため。
  */
-function computeComposite(row, fit = undefined) {
+function compositeDetail(row, fit = undefined) {
   const budgetFitResult = fit === undefined ? budgetFit(row) : fit;
 
   let total = 0;
   let weightSum = 0;
+  let weakest = null;
+
   DIMENSION_ORDER.forEach((key) => {
     const value = dimensionValue(row, key, budgetFitResult);
     const weight = state.weights[key] ?? 0;
     if (value === null || value === undefined || weight <= 0) return;
     total += value * weight;
     weightSum += weight;
+    // 重み0の観点は「見ない」という意思表示なので、低くても弱点にしない
+    if (weakest === null || value < weakest.value) weakest = { key, value };
   });
-  return weightSum > 0 ? total / weightSum : null;
+
+  if (weightSum <= 0) return null;
+
+  const mean = total / weightSum;
+  const { floor, penaltyPerPoint } = state.balance;
+  const shortfall = floor && weakest ? Math.max(0, floor - weakest.value) : 0;
+  const penalty = shortfall * penaltyPerPoint;
+
+  return {
+    mean,
+    weakest,
+    shortfall,
+    penalty,
+    belowFloor: shortfall > 0,
+    composite: Math.max(0, mean - penalty),
+  };
+}
+
+function computeComposite(row, fit = undefined) {
+  const detail = compositeDetail(row, fit);
+  return detail ? detail.composite : null;
 }
 
 function dimensionValue(row, key, fit) {
@@ -618,26 +772,33 @@ function renderRankingHead() {
 
 function renderRanking() {
   renderRankingHead();
+  // 残る件数は重みや年収でも変わるので、ランキングを描き直すたびに数え直す
+  renderBalanceNote();
   const tbody = document.querySelector('#ranking-table tbody');
   const empty = document.getElementById('ranking-empty');
   tbody.innerHTML = '';
 
   const minPop = Number(document.getElementById('rank-size').value || 0);
+  const excludeWeak = state.balance.floor > 0 && state.balance.exclude;
   const rows = state.ranking
     .map((row) => {
       const fit = budgetFit(row);
-      return { ...row, _fit: fit, _composite: computeComposite(row, fit) };
+      const detail = compositeDetail(row, fit);
+      return { ...row, _fit: fit, _detail: detail, _composite: detail?.composite ?? null };
     })
     .filter((row) => row._composite !== null)
     .filter((row) => !minPop || (row.raw_pop_total ?? 0) >= minPop)
     // 年収を消したときに絞り込みだけが残って全件消えないよう、両方が立っているときだけ効かせる
     .filter((row) => !onlyAffordable() || row._fit?.withinBudget)
+    .filter((row) => !excludeWeak || !row._detail.belowFloor)
     .sort((a, b) => b._composite - a._composite);
 
   empty.hidden = rows.length > 0;
   empty.textContent = onlyAffordable()
     ? 'この予算に収まる市区町村が見つかりません。条件をゆるめてください。'
-    : 'データがありません。';
+    : excludeWeak
+      ? 'すべての観点が基準点を超える市区町村がありません。基準点を下げてください。'
+      : 'データがありません。';
 
   rows.slice(0, 100).forEach((row, index) => {
     const tr = el('tr');
@@ -657,10 +818,13 @@ function renderRanking() {
     );
     tr.append(nameCell);
 
-    tr.append(scoreCell(row._composite, true));
-    DIMENSION_ORDER.forEach((key) =>
-      tr.append(scoreCell(dimensionValue(row, key, row._fit))),
-    );
+    tr.append(compositeCell(row._detail));
+    DIMENSION_ORDER.forEach((key) => {
+      const value = dimensionValue(row, key, row._fit);
+      // 減点の原因になった観点に印を付ける。総合点が下がった理由をその場で示す。
+      const isWeak = row._detail.belowFloor && row._detail.weakest?.key === key;
+      tr.append(scoreCell(value, false, isWeak));
+    });
 
     const distance = row.raw_tokyo_distance_km;
     tr.append(el('td', 'num', distance === null || distance === undefined
@@ -705,8 +869,11 @@ function requiredCostCell(fit) {
   return td;
 }
 
-function scoreCell(value, emphasize = false) {
-  const td = el('td', `num${emphasize ? ' emphasize' : ''}`);
+function scoreCell(value, emphasize = false, isWeak = false) {
+  const classes = ['num'];
+  if (emphasize) classes.push('emphasize');
+  if (isWeak) classes.push('is-weak');
+  const td = el('td', classes.join(' '));
   if (value === null || value === undefined) {
     td.textContent = '—';
     return td;
@@ -718,6 +885,26 @@ function scoreCell(value, emphasize = false) {
   bar.append(fill);
   bar.append(el('span', 'score-num', fmt(value, 0)));
   td.append(bar);
+  if (isWeak) td.title = `この観点が基準点（${state.balance.floor}点）を下回っています`;
+  return td;
+}
+
+/** 総合点のセル。減点されているときは、平均と減点幅を添える。 */
+function compositeCell(detail) {
+  const td = scoreCell(detail.composite, true);
+  if (!detail.belowFloor) return td;
+
+  td.append(
+    el(
+      'span',
+      'composite-penalty',
+      `平均${fmt(detail.mean, 0)} − 弱点${fmt(detail.penalty, 0)}`,
+    ),
+  );
+  const label = state.meta.dimensions.find((d) => d.key === detail.weakest.key);
+  td.title = `${label ? dimensionLabel(label) : detail.weakest.key}が`
+    + `${fmt(detail.weakest.value, 0)}点で基準点を${fmt(detail.shortfall, 0)}点下回るため、`
+    + `平均${fmt(detail.mean, 1)}点から${fmt(detail.penalty, 1)}点引いています`;
   return td;
 }
 
@@ -787,13 +974,13 @@ async function loadDetail(cityCode) {
     `${municipality.prefecture_name}　人口 ${fmt(metrics.pop_total)}人`;
 
   const fit = budgetFit(scores);
-  const composite = computeComposite(scores, fit);
+  const detail = compositeDetail(scores, fit);
   document.getElementById('detail-composite').textContent =
-    composite === null ? '—' : fmt(composite, 0);
+    detail === null ? '—' : fmt(detail.composite, 0);
 
   renderRadar(scores, fit);
   renderHighlights(metrics, fit);
-  renderBreakdown(data.score_breakdown, fit);
+  renderBreakdown(data.score_breakdown, fit, detail);
   renderTimeline(data.child_projection, data.stages);
   renderPriceChart(data.price_trend);
   renderPopChart(data.stats_trend);

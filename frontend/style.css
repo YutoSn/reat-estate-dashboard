@@ -332,6 +332,56 @@ input[type="range"]::-moz-range-thumb {
 .highlight.is-warn { border-color: var(--warm); }
 .highlight.is-warn .highlight-value { color: var(--warm); }
 
+/* ---------------------------------------------------------- 弱点の扱い */
+.balance {
+  margin-top: 1rem;
+  padding-top: .9rem;
+  border-top: 1px solid var(--border);
+}
+.balance-head h3 { margin: 0 0 .2rem; font-size: .92rem; }
+.balance-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .8rem 1.4rem;
+  margin-top: .7rem;
+}
+.balance-controls .checkbox { margin-top: 0; }
+.balance-controls .checkbox input:disabled { opacity: .4; }
+.balance-note {
+  margin: .6rem 0 0;
+  padding: .5rem .7rem;
+  border-radius: 9px;
+  background: var(--surface-alt);
+  font-size: .78rem;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+
+/* 減点の原因になった観点 */
+.data-table td.is-weak { background: rgba(201, 111, 63, .1); }
+.data-table td.is-weak .score-num { color: var(--warm); font-weight: 700; }
+.composite-penalty {
+  display: block;
+  margin-top: .1rem;
+  font-size: .66rem;
+  color: var(--warm);
+  white-space: nowrap;
+}
+
+.breakdown-total {
+  margin: 0 0 .3rem;
+  padding: .6rem .8rem;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  font-size: .8rem;
+  line-height: 1.7;
+}
+.breakdown-total.is-penalized {
+  background: rgba(201, 111, 63, .12);
+  color: var(--text);
+}
+
 /* ------------------------------------------------- スコアの出し方・内訳 */
 .logic { margin-top: 1rem; border-top: 1px solid var(--border); padding-top: .8rem; }
 .logic > summary {
