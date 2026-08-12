@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from config import (
     BALANCE_MODEL,
     BUDGET_MODEL,
+    LOAN_MODEL,
     CATCHMENT_RADIUS_KM,
     DUCKDB_FILE,
     REGIONAL_HUBS,
@@ -135,6 +136,8 @@ def get_meta():
         # 世帯年収から予算を出すときの前提。フロントはここを唯一の定義として使う。
         "budget_model": BUDGET_MODEL,
         "balance_model": BALANCE_MODEL,
+        # ローン試算の前提。予算判定と同じ値を使うのでここが唯一の定義。
+        "loan_model": LOAN_MODEL,
         "access": {
             "tokyo_center": TOKYO_CENTER[0],
             "hubs": [name for name, _, _ in REGIONAL_HUBS],

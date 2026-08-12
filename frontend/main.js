@@ -156,6 +156,7 @@ async function init() {
 
   setupDetailView();
   setupTrendControls();
+  setupLoanView();
 }
 
 function setupTabs() {
@@ -1775,6 +1776,294 @@ function renderCompareTable(data) {
       tr.append(el('td', `num${code === state.focusCode ? ' is-focus' : ''}`, accessor(item)));
     });
     tbody.append(tr);
+  });
+}
+
+// ---------------------------------------------------------------- ローン試算
+//
+// 元利均等返済 … 毎回の返済額が一定。月利 r、回数 n、借入 P として
+//                  返済額 = P·r ÷ (1 − (1+r)^−n)
+// 元金均等返済 … 毎回の元金が P/n で一定。利息はその時点の残高に掛かるので、
+//                  返済額は初回が最大で年々下がる。
+//
+// 金利0%のときは (1+r)^−n が1になって分母が0になるため、別扱いにする。
+
+function buildSchedule({ principal, annualRate, years, method }) {
+  const n = Math.round(years * 12);
+  if (!(principal > 0) || !(n > 0)) return null;
+
+  const r = annualRate / 100 / 12;
+  const rows = [];
+  let balance = principal;
+  let totalInterest = 0;
+
+  const flatPayment = r === 0
+    ? principal / n
+    : (principal * r) / (1 - Math.pow(1 + r, -n));
+  const flatPrincipal = principal / n;
+
+  for (let i = 1; i <= n; i += 1) {
+    const interest = balance * r;
+    let principalPart;
+    let payment;
+
+    if (method === 'equal_principal') {
+      principalPart = flatPrincipal;
+      payment = principalPart + interest;
+    } else {
+      payment = flatPayment;
+      principalPart = payment - interest;
+    }
+
+    // 端数の積み上がりで最終回に残高が残らないよう、最後は残高で締める
+    if (i === n) {
+      principalPart = balance;
+      payment = principalPart + interest;
+    }
+
+    balance = Math.max(0, balance - principalPart);
+    totalInterest += interest;
+    rows.push({ month: i, payment, interest, principal: principalPart, balance });
+  }
+
+  return {
+    months: rows,
+    totalInterest,
+    totalPayment: principal + totalInterest,
+    firstPayment: rows[0].payment,
+    lastPayment: rows[rows.length - 1].payment,
+    isFlat: method !== 'equal_principal',
+  };
+}
+
+function yearlySchedule(schedule) {
+  const years = [];
+  schedule.months.forEach((row, index) => {
+    const year = Math.floor(index / 12);
+    if (!years[year]) {
+      years[year] = { year: year + 1, payment: 0, interest: 0, principal: 0, balance: 0 };
+    }
+    years[year].payment += row.payment;
+    years[year].interest += row.interest;
+    years[year].principal += row.principal;
+    years[year].balance = row.balance;
+  });
+  return years;
+}
+
+function loanInputs() {
+  const model = state.meta?.loan_model ?? {};
+  const price = Number(document.getElementById('loan-price').value || 0);
+  const down = Number(document.getElementById('loan-down').value || 0);
+  return {
+    price,
+    down,
+    // 頭金が価格を上回っても借入がマイナスにならないようにする
+    principal: Math.max(0, (price - down)) * 10000,
+    annualRate: Number(document.getElementById('loan-rate').value || 0),
+    years: Number(document.getElementById('loan-years').value || model.loan_years || 35),
+    method: document.getElementById('loan-method').value || 'equal_payment',
+    ratio: Number(document.getElementById('loan-ratio').value || 25),
+  };
+}
+
+function setupLoanView() {
+  const model = state.meta?.loan_model;
+  if (!model) return;
+
+  const yearSelect = document.getElementById('loan-years');
+  (model.loan_years_options ?? [35]).forEach((years) => {
+    const option = el('option', null, `${years}年`);
+    option.value = String(years);
+    yearSelect.append(option);
+  });
+
+  const methodSelect = document.getElementById('loan-method');
+  (model.methods ?? []).forEach((method) => {
+    const option = el('option', null, method.label);
+    option.value = method.key;
+    methodSelect.append(option);
+  });
+
+  const ratioSelect = document.getElementById('loan-ratio');
+  (model.repayment_ratios ?? [25]).forEach((ratio) => {
+    const option = el('option', null, `${ratio}%`);
+    option.value = String(ratio);
+    ratioSelect.append(option);
+  });
+
+  const excludes = document.getElementById('loan-excludes');
+  (model.excludes ?? []).forEach((item) => excludes.append(el('li', null, item)));
+
+  applyLoanDefaults();
+  document.getElementById('loan-reset').addEventListener('click', () => {
+    applyLoanDefaults();
+    renderLoan();
+  });
+  document.getElementById('loan-form').addEventListener('input', renderLoan);
+  document.getElementById('loan-form').addEventListener('change', renderLoan);
+  renderLoan();
+}
+
+function applyLoanDefaults() {
+  const model = state.meta.loan_model;
+  document.getElementById('loan-price').value = model.price;
+  document.getElementById('loan-down').value = model.down_payment;
+  document.getElementById('loan-rate').value = model.interest_rate;
+  document.getElementById('loan-years').value = String(model.loan_years);
+  document.getElementById('loan-method').value = model.method;
+  document.getElementById('loan-ratio').value = String(model.default_repayment_ratio);
+}
+
+function renderLoan() {
+  const input = loanInputs();
+  const schedule = buildSchedule(input);
+
+  const methodMeta = (state.meta.loan_model.methods ?? [])
+    .find((m) => m.key === input.method);
+  document.getElementById('loan-method-note').textContent =
+    methodMeta ? methodMeta.description : '';
+
+  const monthlyEl = document.getElementById('loan-monthly');
+  const labelEl = document.getElementById('loan-monthly-label');
+  const subEl = document.getElementById('loan-monthly-sub');
+  const summaryEl = document.getElementById('loan-summary');
+  const incomeEl = document.getElementById('loan-income');
+  const tbody = document.querySelector('#loan-table tbody');
+
+  summaryEl.innerHTML = '';
+  incomeEl.innerHTML = '';
+  tbody.innerHTML = '';
+
+  if (!schedule) {
+    labelEl.textContent = '毎月の返済額';
+    monthlyEl.textContent = '—';
+    subEl.textContent = '物件価格と頭金を入力してください。';
+    destroyChart('loan');
+    return;
+  }
+
+  if (schedule.isFlat) {
+    labelEl.textContent = '毎月の返済額';
+    monthlyEl.textContent = `${fmt(schedule.firstPayment)}円`;
+    subEl.textContent = `${input.years}年間ずっと同じ金額です`;
+  } else {
+    labelEl.textContent = '毎月の返済額（初回）';
+    monthlyEl.textContent = `${fmt(schedule.firstPayment)}円`;
+    subEl.textContent =
+      `最終回は ${fmt(schedule.lastPayment)}円 まで下がります`;
+  }
+
+  const summaryItems = [
+    ['借入額', `${fmt(input.principal)}円`],
+    ['利息の総額', `${fmt(schedule.totalInterest)}円`],
+    ['総返済額', `${fmt(schedule.totalPayment)}円`],
+    ['頭金を含めた総支払', `${fmt(schedule.totalPayment + input.down * 10000)}円`],
+  ];
+  summaryItems.forEach(([label, value]) => {
+    const card = el('div', 'loan-stat');
+    card.append(el('span', 'loan-stat-label', label));
+    card.append(el('span', 'loan-stat-value', value));
+    summaryEl.append(card);
+  });
+
+  // 年収の目安。元金均等は返済額が下がるので、いちばん重い初年度で見る。
+  const firstYearPayment = schedule.months
+    .slice(0, 12)
+    .reduce((total, row) => total + row.payment, 0);
+  (state.meta.loan_model.repayment_ratios ?? [25]).forEach((ratio) => {
+    const income = firstYearPayment / (ratio / 100);
+    const card = el('div', `income-card${ratio === input.ratio ? ' is-active' : ''}`);
+    card.append(el('span', 'income-ratio', `返済負担率 ${ratio}%`));
+    card.append(el('span', 'income-value', `${fmt(income / 10000)}万円`));
+    card.append(el('span', 'income-note',
+      ratio <= 20 ? '余裕を持ちたい場合'
+        : ratio >= 30 ? '審査上の上限に近い水準' : '一般的な目安'));
+    incomeEl.append(card);
+  });
+
+  const years = yearlySchedule(schedule);
+  years.forEach((row) => {
+    const tr = el('tr');
+    tr.append(el('td', null, `${row.year}年目`));
+    tr.append(el('td', 'num', fmt(row.payment)));
+    tr.append(el('td', 'num', fmt(row.principal)));
+    tr.append(el('td', 'num', fmt(row.interest)));
+    tr.append(el('td', 'num', fmt(row.balance)));
+    tbody.append(tr);
+  });
+
+  renderLoanChart(years);
+}
+
+function renderLoanChart(years) {
+  destroyChart('loan');
+  const canvas = document.getElementById('loan-chart');
+  const ink = cssVar('--chart-ink');
+  const grid = cssVar('--chart-grid');
+
+  state.charts.loan = new Chart(canvas, {
+    data: {
+      labels: years.map((y) => `${y.year}年目`),
+      datasets: [
+        {
+          type: 'bar',
+          label: '元金',
+          data: years.map((y) => Math.round(y.principal)),
+          backgroundColor: cssVar('--series-1'),
+          stack: 'payment',
+          yAxisID: 'y',
+        },
+        {
+          type: 'bar',
+          label: '利息',
+          data: years.map((y) => Math.round(y.interest)),
+          backgroundColor: cssVar('--series-2'),
+          stack: 'payment',
+          yAxisID: 'y',
+        },
+        {
+          type: 'line',
+          label: '残高',
+          data: years.map((y) => Math.round(y.balance)),
+          borderColor: cssVar('--series-3'),
+          backgroundColor: 'transparent',
+          yAxisID: 'y1',
+          tension: 0.2,
+          pointRadius: 0,
+          borderWidth: 2,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: ink } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${fmt(ctx.parsed.y)}円`,
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, ticks: { color: ink, maxTicksLimit: 12 }, grid: { color: grid } },
+        y: {
+          stacked: true,
+          position: 'left',
+          title: { display: true, text: '年間返済額', color: ink },
+          ticks: { color: ink, callback: (v) => `${(v / 10000).toFixed(0)}万` },
+          grid: { color: grid },
+        },
+        y1: {
+          position: 'right',
+          title: { display: true, text: '残高', color: ink },
+          ticks: { color: ink, callback: (v) => `${(v / 10000000).toFixed(1)}千万` },
+          grid: { drawOnChartArea: false },
+        },
+      },
+    },
   });
 }
 

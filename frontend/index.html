@@ -22,6 +22,7 @@
       <nav class="tabs" role="tablist">
         <button class="tab is-active" data-view="explore" role="tab">探す</button>
         <button class="tab" data-view="detail" role="tab">詳しく見る・比べる</button>
+        <button class="tab" data-view="loan" role="tab">ローン試算</button>
         <button class="tab" data-view="hazard" role="tab">災害リスク</button>
       </nav>
     </div>
@@ -354,6 +355,113 @@
       </div>
 
       <p class="empty-note" id="detail-empty">市区町村を選んでください。</p>
+    </section>
+
+    <!-- ========================== ローン試算 ========================== -->
+    <section class="view" id="view-loan">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>返済の条件</h2>
+          <button class="btn-ghost" id="loan-reset">初期値に戻す</button>
+        </div>
+        <div class="loan-form" id="loan-form">
+          <label class="field">
+            <span>物件価格</span>
+            <span class="input-suffix">
+              <input type="number" id="loan-price" class="input" min="0" step="100" />
+              <em>万円</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>頭金</span>
+            <span class="input-suffix">
+              <input type="number" id="loan-down" class="input" min="0" step="50" />
+              <em>万円</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>金利（年）</span>
+            <span class="input-suffix">
+              <input type="number" id="loan-rate" class="input" min="0" max="10" step="0.05" />
+              <em>%</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>返済年数</span>
+            <select id="loan-years" class="select"></select>
+          </label>
+          <label class="field">
+            <span>返済方式</span>
+            <select id="loan-method" class="select"></select>
+          </label>
+          <label class="field">
+            <span>返済負担率</span>
+            <select id="loan-ratio" class="select"></select>
+          </label>
+        </div>
+        <p class="panel-note" id="loan-method-note"></p>
+      </div>
+
+      <div class="panel hero-panel">
+        <div class="loan-headline">
+          <div class="loan-primary">
+            <span class="loan-label" id="loan-monthly-label">毎月の返済額</span>
+            <span class="loan-amount" id="loan-monthly">—</span>
+            <span class="loan-sub" id="loan-monthly-sub"></span>
+          </div>
+          <div class="loan-secondary" id="loan-summary"></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>この返済額を無理なく払える世帯年収の目安</h2>
+        </div>
+        <p class="panel-note">
+          年間返済額を返済負担率で割った金額です。返済負担率は「年収に占める
+          年間返済額の割合」で、金融機関が審査で見る値のひとつ。
+          低いほど家計に余裕が残ります。
+        </p>
+        <div class="income-grid" id="loan-income"></div>
+      </div>
+
+      <div class="panel">
+        <h2>返済額と残高の推移</h2>
+        <div class="chart-box tall">
+          <canvas id="loan-chart"></canvas>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>年ごとの返済予定</h2>
+          <span class="panel-hint">各年末時点</span>
+        </div>
+        <div class="table-scroll">
+          <table class="data-table" id="loan-table">
+            <thead>
+              <tr>
+                <th>経過</th>
+                <th class="num">年間返済額</th>
+                <th class="num">うち元金</th>
+                <th class="num">うち利息</th>
+                <th class="num">残高</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>この試算に含めていないもの</h2>
+        <ul class="note-list" id="loan-excludes"></ul>
+        <p class="panel-note">
+          金利は全期間固定として計算しています。変動金利を選んだ場合、
+          将来の金利変動は反映されません。実際の借入可能額や適用金利は
+          金融機関の審査で決まります。ここでの計算は目安です。
+        </p>
+      </div>
     </section>
 
     <!-- ========================== 災害リスク ========================== -->

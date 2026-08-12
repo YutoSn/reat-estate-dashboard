@@ -854,3 +854,113 @@ input[type="range"]::-moz-range-thumb {
   font-size: .82rem;
   color: var(--text-soft);
 }
+
+/* ------------------------------------------------------------ ローン試算 */
+.loan-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: .9rem;
+}
+
+.input {
+  background: var(--surface-alt);
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: .95rem;
+  padding: .45rem .7rem;
+  width: 100%;
+  font-variant-numeric: tabular-nums;
+}
+.input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 単位を入力欄の右に添える。数値を右端まで伸ばしたいので絶対配置にする */
+.input-suffix { position: relative; display: block; }
+.input-suffix .input { padding-right: 3rem; }
+.input-suffix em {
+  position: absolute;
+  right: .7rem;
+  top: 50%;
+  transform: translateY(-50%);
+  font-style: normal;
+  font-size: .8rem;
+  color: var(--text-soft);
+  pointer-events: none;
+}
+
+.loan-headline {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+.loan-primary { flex: 1 1 240px; }
+.loan-label { display: block; font-size: .8rem; color: var(--text-soft); }
+.loan-amount {
+  display: block;
+  font-size: 2.4rem;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.loan-sub { font-size: .8rem; color: var(--text-faint); }
+
+.loan-secondary {
+  flex: 2 1 380px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: .6rem;
+}
+.loan-stat {
+  background: var(--surface-alt);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .55rem .7rem;
+  display: flex;
+  flex-direction: column;
+}
+.loan-stat-label { font-size: .74rem; color: var(--text-soft); }
+.loan-stat-value {
+  font-size: 1.05rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.income-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: .7rem;
+}
+.income-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .7rem .8rem;
+  display: flex;
+  flex-direction: column;
+  gap: .15rem;
+}
+.income-card.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.income-ratio { font-size: .78rem; color: var(--text-soft); }
+.income-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.income-note { font-size: .72rem; color: var(--text-faint); }
+
+.note-list {
+  margin: .3rem 0 0;
+  padding-left: 1.1rem;
+  font-size: .84rem;
+  color: var(--text-soft);
+}
+.note-list li { margin-bottom: .15rem; }
+
+@media (max-width: 780px) {
+  .loan-amount { font-size: 2rem; }
+}
