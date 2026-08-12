@@ -115,6 +115,26 @@ class DuckDBManager:
             )
             """
         )
+        # 医療機関は施設単位で持つ。診療科目の判定ルールを変えたときに
+        # 取り直さずに数え直せるよう、生の科目文字列も残しておく。
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS medical_facilities (
+                facility_id       VARCHAR PRIMARY KEY,
+                name              VARCHAR,
+                facility_type     VARCHAR,
+                address           VARCHAR,
+                medical_subject   VARCHAR,
+                latitude          DOUBLE,
+                longitude         DOUBLE,
+                beds              INTEGER,
+                municipality_code VARCHAR,
+                distance_km       DOUBLE,
+                is_pediatric      BOOLEAN,
+                is_obstetric      BOOLEAN
+            )
+            """
+        )
 
     # ------------------------------------------------------------------ 書き込み
     def replace_municipalities(self, df: pd.DataFrame) -> None:
@@ -156,6 +176,84 @@ class DuckDBManager:
         ]
         conn.register("df_land", df[columns])
         conn.execute(f"INSERT INTO land_prices SELECT {', '.join(columns)} FROM df_land")
+
+    def replace_stats_for_indicators(
+        self, df: pd.DataFrame, indicators: list[str]
+    ) -> None:
+        """特定の指標だけを入れ替える。
+
+        医療機関のように e-Stat 以外から作る指標があるため、統計テーブル全体を
+        消さずに差し替えられるようにしている。
+        """
+        if not indicators:
+            return
+        placeholders = ", ".join("?" for _ in indicators)
+        self._conn.execute(
+            f"DELETE FROM municipality_stats WHERE indicator IN ({placeholders})",
+            indicators,
+        )
+        if df.empty:
+            return
+        self._conn.register("df_partial_stats", df)
+        self._conn.execute(
+            "INSERT INTO municipality_stats SELECT municipality_code, year,"
+            " indicator, value FROM df_partial_stats"
+        )
+
+    def replace_medical_facilities(self, df: pd.DataFrame) -> None:
+        columns = [
+            "facility_id", "name", "facility_type", "address", "medical_subject",
+            "latitude", "longitude", "beds", "municipality_code", "distance_km",
+            "is_pediatric", "is_obstetric",
+        ]
+        self._conn.execute("DELETE FROM medical_facilities")
+        self._conn.register("df_medical", df[columns])
+        self._conn.execute(
+            f"INSERT INTO medical_facilities SELECT {', '.join(columns)} FROM df_medical"
+        )
+
+    def get_medical_facilities(self) -> pd.DataFrame:
+        return self._query("SELECT * FROM medical_facilities")
+
+    def get_medical_counts_by_city(self) -> pd.DataFrame:
+        """最寄り自治体ごとの小児科・産科の施設数。"""
+        query = """
+            SELECT
+                municipality_code,
+                COUNT(*) FILTER (WHERE is_pediatric) AS pediatric_clinics,
+                COUNT(*) FILTER (WHERE is_obstetric) AS obstetric_clinics
+            FROM medical_facilities
+            WHERE municipality_code IS NOT NULL
+            GROUP BY municipality_code
+        """
+        return self._query(query)
+
+    def get_facilities_near(
+        self, latitude: float, longitude: float, radius_km: float,
+        pediatric_only: bool = True,
+    ) -> pd.DataFrame:
+        """指定地点から半径内の医療機関。画面で施設名を出すために使う。"""
+        condition = "AND is_pediatric" if pediatric_only else ""
+        # 距離の別名は WHERE では参照できないので、サブクエリで作ってから絞る。
+        # （QUALIFY はウィンドウ関数が必要なので使えない）
+        query = f"""
+            SELECT * FROM (
+                SELECT name, facility_type, address, medical_subject, beds,
+                       latitude, longitude,
+                       6371.0088 * 2 * asin(sqrt(
+                           pow(sin(radians(latitude - ?) / 2), 2)
+                           + cos(radians(?)) * cos(radians(latitude))
+                             * pow(sin(radians(longitude - ?) / 2), 2)
+                       )) AS distance_km
+                FROM medical_facilities
+                WHERE latitude IS NOT NULL {condition}
+            )
+            WHERE distance_km <= ?
+            ORDER BY distance_km
+        """
+        return self._query(
+            query, [latitude, latitude, longitude, radius_km]
+        )
 
     def replace_scores(self, df: pd.DataFrame) -> None:
         self._conn.execute("DELETE FROM municipality_scores")

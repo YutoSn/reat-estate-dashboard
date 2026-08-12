@@ -15,10 +15,12 @@ import argparse
 import os
 import sys
 
+import numpy as np
 import pandas as pd
 from dotenv import load_dotenv
 
 from config import (
+    CATCHMENT_RADIUS_KM,
     DUCKDB_FILE,
     MUNICIPALITY_GEO_FILE,
     TARGET_PREFECTURE_CODES,
@@ -26,17 +28,32 @@ from config import (
     current_year,
 )
 from src.analysis.catchment import NEIGHBOR_INDICATORS
-from src.analysis.geo import municipality_points, neighbor_point_codes
+from src.analysis.geo import (
+    haversine_km,
+    municipality_points,
+    neighbor_point_codes,
+)
 from src.analysis.metrics import build_metric_table
 from src.analysis.scoring import composite_score, score_table, scores_to_long
+from src.analysis.specialties import is_obstetric, is_pediatric
 from src.db.duckdb_manager import DuckDBManager
 from src.fetchers.estat_api import EStatAPI, parse_value, parse_year
+from src.fetchers.medical_api import (
+    ZOOM,
+    MedicalFacilityAPI,
+    normalize_feature,
+    tiles_covering,
+)
 from src.fetchers.real_estate_api import RealEstateLibraryAPI
 from src.indicators import DATASET_POPULATION, INDICATORS
 
 
 # 住まい選びに使わない取引種別。保存対象から外してDBを軽くする。
 EXCLUDED_TRADE_TYPES = {"農地", "林地"}
+
+# 医療機関データ（国土数値情報 P04）の整備年。
+# 統計テーブルに入れるときの「観測年」として使い、画面にもこの年で出す。
+MEDICAL_DATA_YEAR = 2024
 
 
 def _log(message: str) -> None:
@@ -148,8 +165,12 @@ def populate_stats(db: DuckDBManager, api: EStatAPI) -> None:
     stats = stats.drop_duplicates(
         subset=["municipality_code", "year", "indicator"], keep="last"
     )
-    db.replace_stats(stats)
-    _log(f"  統計値 {len(stats):,} 行を登録")
+    # 取得できた指標だけを入れ替える。
+    # 全消しにすると (1) 医療機関から作った指標まで消える (2) 1指標が取得失敗
+    # しただけで既存データを失う、の2つが起きるため。
+    fetched = sorted(stats["indicator"].unique())
+    db.replace_stats_for_indicators(stats, fetched)
+    _log(f"  統計値 {len(stats):,} 行を登録（{len(fetched)} 指標）")
 
 
 def populate_land_prices(db: DuckDBManager, api: RealEstateLibraryAPI) -> None:
@@ -186,6 +207,149 @@ def populate_land_prices(db: DuckDBManager, api: RealEstateLibraryAPI) -> None:
         _log(f"  {pref_code}: {len(df):,} 件を登録（累計 {fetched:,}）")
 
     _log(f"  不動産取引 {fetched:,} 行を登録")
+
+
+def populate_medical_facilities(db: DuckDBManager, api: MedicalFacilityAPI) -> None:
+    """医療機関を施設単位で取得し、最寄りの市区町村に割り当てて保存する。
+
+    施設は座標で持っているが、圏内集計は市区町村ごとの供給量を足し上げる
+    作りになっている（人口の分母が市区町村単位でしか取れないため）。
+    そこで最寄りの代表点に寄せてから数える。
+    """
+    points = municipality_points()
+    if not points:
+        _log(
+            f"  {MUNICIPALITY_GEO_FILE} が無いため医療機関を取得できません。\n"
+            "  python scripts/build_municipality_geo.py で生成してください。"
+        )
+        return
+
+    target_codes = {row["municipality_code"] for row in db.get_cities_all()}
+    if not target_codes:
+        _log("  市区町村マスタが空のため中止")
+        return
+
+    # 対象自治体の圏内にある施設だけ取れれば足りる
+    target_coords = [points[code] for code in target_codes if code in points]
+    tiles = tiles_covering(target_coords, CATCHMENT_RADIUS_KM)
+    _log(f"医療機関を取得中（z={ZOOM} タイル {len(tiles):,} 枚）...")
+
+    facilities: dict[str, dict] = {}
+    empty_tiles = 0
+    for index, features in api.fetch_tiles(tiles):
+        if not features:
+            empty_tiles += 1
+        for feature in features:
+            record = normalize_feature(feature)
+            if record:
+                facilities[record["facility_id"]] = record
+        if index % 250 == 0 or index == len(tiles):
+            _log(
+                f"  [{index:,}/{len(tiles):,}] 施設 {len(facilities):,} 件"
+                f"（空タイル {empty_tiles:,}）"
+            )
+
+    if not facilities:
+        _log("  医療機関を1件も取得できませんでした")
+        return
+
+    df = pd.DataFrame(list(facilities.values()))
+
+    # 最寄りの市区町村代表点に割り当てる
+    codes, distances = _assign_nearest(df, points)
+    df["municipality_code"] = codes
+    df["distance_km"] = distances
+
+    df["is_pediatric"] = [
+        is_pediatric(subject, kind)
+        for subject, kind in zip(df["medical_subject"], df["facility_type"])
+    ]
+    df["is_obstetric"] = [
+        is_obstetric(subject, kind)
+        for subject, kind in zip(df["medical_subject"], df["facility_type"])
+    ]
+
+    db.replace_medical_facilities(df)
+    _log(
+        f"  医療機関 {len(df):,} 件を登録"
+        f"（小児科 {int(df['is_pediatric'].sum()):,} / "
+        f"産科 {int(df['is_obstetric'].sum()):,}）"
+    )
+    _store_medical_counts(db)
+
+
+# 距離行列を一度に作るとメモリを食うので、施設をこの件数ずつ処理する。
+# 6万施設 × 770自治体 = 4600万要素（約370MB）になるため。
+_ASSIGN_CHUNK = 4000
+_EARTH_RADIUS_KM = 6371.0088
+
+
+def _assign_nearest(
+    df: pd.DataFrame, points: dict[str, tuple[float, float]]
+) -> tuple[list[str], list[float]]:
+    """各施設を最寄りの市区町村代表点に割り当てる。
+
+    施設6万件×自治体770件を1件ずつ回すと4600万回の三角関数になって数分かかる。
+    numpy でまとめて計算し、メモリのためにチャンクに分ける。
+    """
+    codes = list(points)
+    municipality_lat = np.radians(np.array([points[c][0] for c in codes]))
+    municipality_lon = np.radians(np.array([points[c][1] for c in codes]))
+    cos_municipality = np.cos(municipality_lat)
+
+    facility_lat = np.radians(df["latitude"].to_numpy(dtype=float))
+    facility_lon = np.radians(df["longitude"].to_numpy(dtype=float))
+
+    assigned_codes: list[str] = []
+    assigned_distances: list[float] = []
+
+    for start in range(0, len(facility_lat), _ASSIGN_CHUNK):
+        lat = facility_lat[start:start + _ASSIGN_CHUNK][:, None]
+        lon = facility_lon[start:start + _ASSIGN_CHUNK][:, None]
+
+        delta_lat = municipality_lat[None, :] - lat
+        delta_lon = municipality_lon[None, :] - lon
+        inner = (
+            np.sin(delta_lat / 2) ** 2
+            + np.cos(lat) * cos_municipality[None, :] * np.sin(delta_lon / 2) ** 2
+        )
+        distance = 2 * _EARTH_RADIUS_KM * np.arcsin(np.sqrt(inner))
+
+        nearest = distance.argmin(axis=1)
+        assigned_codes.extend(codes[i] for i in nearest)
+        assigned_distances.extend(
+            round(float(d), 2) for d in distance[np.arange(len(nearest)), nearest]
+        )
+
+    return assigned_codes, assigned_distances
+
+
+def _store_medical_counts(db: DuckDBManager) -> None:
+    """小児科・産科の施設数を、統計テーブルに指標として書き込む。
+
+    圏内集計は municipality_stats の指標を読む作りなので、施設テーブルとは
+    別にここへ入れておく。年は元データの整備年（国土数値情報の版）に合わせる。
+    """
+    counts = db.get_medical_counts_by_city()
+    if counts.empty:
+        return
+
+    rows = []
+    for _, row in counts.iterrows():
+        for indicator in ("pediatric_clinics", "obstetric_clinics"):
+            rows.append(
+                {
+                    "municipality_code": row["municipality_code"],
+                    "year": MEDICAL_DATA_YEAR,
+                    "indicator": indicator,
+                    "value": float(row[indicator]),
+                }
+            )
+
+    db.replace_stats_for_indicators(
+        pd.DataFrame(rows), ["pediatric_clinics", "obstetric_clinics"]
+    )
+    _log(f"  施設数を統計に反映（{len(rows):,} 行）")
 
 
 def compute_scores(db: DuckDBManager) -> None:
@@ -241,10 +405,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="データ取得とスコア計算")
     parser.add_argument("--stats", action="store_true", help="e-Stat 統計のみ")
     parser.add_argument("--prices", action="store_true", help="不動産取引のみ")
+    parser.add_argument("--medical", action="store_true", help="医療機関のみ")
     parser.add_argument("--scores", action="store_true", help="スコア再計算のみ")
     args = parser.parse_args()
 
-    run_all = not (args.stats or args.prices or args.scores)
+    run_all = not (args.stats or args.prices or args.medical or args.scores)
 
     load_dotenv()
     estat_app_id = os.getenv("E_STAT_APP_ID")
@@ -276,7 +441,13 @@ def main() -> int:
         else:
             populate_land_prices(db, RealEstateLibraryAPI(real_estate_key))
 
-    if run_all or args.scores or args.stats or args.prices:
+    if run_all or args.medical:
+        if not real_estate_key:
+            _log("REAL_ESTATE_LIBRARY_API_KEY が未設定のため医療機関取得をスキップ")
+        else:
+            populate_medical_facilities(db, MedicalFacilityAPI(real_estate_key))
+
+    if run_all or args.scores or args.stats or args.prices or args.medical:
         compute_scores(db)
 
     _log("\n--- テーブル件数 ---")

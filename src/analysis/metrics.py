@@ -8,7 +8,12 @@ from typing import Any
 
 import pandas as pd
 
-from src.analysis.catchment import build_points, catchment_table
+from src.analysis.catchment import (
+    PRIMARY_DEMAND,
+    SupplySpec,
+    build_points,
+    catchment_table,
+)
 from src.analysis.geo import access_distances, municipality_points
 
 # 指標ごとの「使える鮮度」の上限（年）。これより古い値しかなければ欠測扱い。
@@ -329,7 +334,20 @@ def build_metric_table(
     return table
 
 
-CATCHMENT_SUPPLY = ["doctors", "hospitals"]
+# 圏内で集計する供給と、その分母。
+# 小児科を総人口で割ると、子どもが少なく高齢者が多い街ほど手厚く見えてしまう。
+# 診てもらう相手は子どもなので、分母は 0〜14歳人口にする。
+# min_demand は「この人数を圏内に抱えていなければ密度を出さない」しきい値。
+# 離島や山間の町は圏内の母数が2桁しかなく、施設1つで値が桁ごと動くため。
+CATCHMENT_SPECS = [
+    SupplySpec("doctors", PRIMARY_DEMAND, min_demand=5_000),
+    SupplySpec("hospitals", PRIMARY_DEMAND, min_demand=5_000),
+    SupplySpec("pediatric_clinics", "pop_0_14", min_demand=1_000),
+    SupplySpec("obstetric_clinics", PRIMARY_DEMAND, min_demand=5_000),
+]
+
+CATCHMENT_SUPPLY = [spec.supply_key for spec in CATCHMENT_SPECS]
+CATCHMENT_DEMAND = sorted({spec.demand_key for spec in CATCHMENT_SPECS} | {PRIMARY_DEMAND})
 
 
 def _build_catchment(
@@ -344,24 +362,34 @@ def _build_catchment(
         index=["municipality_code", "year"], columns="indicator",
         values="value", aggfunc="first",
     )
+    available = set(wide.index.get_level_values(0))
 
-    population: dict[str, float | None] = {}
+    demands: dict[str, dict[str, float | None]] = {}
     supply: dict[str, dict[str, float | None]] = {}
     for code in points:
-        if code not in wide.index.get_level_values(0):
+        if code not in available:
             continue
         group = wide.xs(code, level=0)
-        pop = latest_value(group, "pop_total", reference_year=reference_year)[0]
-        if pop is None:
-            pop = latest_value(group, "pop_census", reference_year=reference_year)[0]
-        population[code] = pop
+
+        values: dict[str, float | None] = {}
+        for key in CATCHMENT_DEMAND:
+            values[key] = latest_value(
+                group, key, reference_year=reference_year
+            )[0]
+        # 住民基本台帳人口が無い年でも国勢調査で埋める
+        if values.get(PRIMARY_DEMAND) is None:
+            values[PRIMARY_DEMAND] = latest_value(
+                group, "pop_census", reference_year=reference_year
+            )[0]
+        demands[code] = values
+
         supply[code] = {
             key: latest_value(group, key, reference_year=reference_year)[0]
             for key in CATCHMENT_SUPPLY
         }
 
-    all_points = build_points(list(points), points, population, supply)
-    return catchment_table(city_codes, all_points, CATCHMENT_SUPPLY)
+    all_points = build_points(list(points), points, demands, supply)
+    return catchment_table(city_codes, all_points, CATCHMENT_SPECS)
 
 
 def _land_price_change_map(price_history: pd.DataFrame) -> dict[str, float]:

@@ -13,6 +13,7 @@ const state = {
   focusCode: null,
   detailCache: new Map(),
   districtCache: new Map(),
+  pediatricCache: new Map(),
   cityNames: new Map(),
   charts: {},
   // 推移グラフの表示。実額のままだと水準差の大きい市区町村が重ねられない。
@@ -1131,13 +1132,16 @@ async function openDetail(prefCode, cityCode) {
 async function loadDetail(cityCode) {
   let data = state.detailCache.get(cityCode);
   let districts = state.districtCache.get(cityCode);
-  if (!data || !districts) {
-    [data, districts] = await Promise.all([
+  let pediatrics = state.pediatricCache.get(cityCode);
+  if (!data || !districts || !pediatrics) {
+    [data, districts, pediatrics] = await Promise.all([
       api(`/api/municipality/${cityCode}`),
       api(`/api/municipality/${cityCode}/districts`),
+      api(`/api/municipality/${cityCode}/pediatrics`).catch(() => null),
     ]);
     state.detailCache.set(cityCode, data);
     state.districtCache.set(cityCode, districts);
+    state.pediatricCache.set(cityCode, pediatrics);
     // 取得を待つあいだに別の市区町村へ切り替わっていたら、古い結果は描かない
     if (state.focusCode !== cityCode) return;
   }
@@ -1163,7 +1167,37 @@ async function loadDetail(cityCode) {
   renderTimeline(data.child_projection, data.stages);
   // 価格と人口の推移は、選んだ市区町村を重ねて renderTrends が描く
   renderDistricts(districts);
+  renderPediatrics(pediatrics);
   renderMetrics(metrics, years);
+}
+
+function renderPediatrics(data) {
+  const tbody = document.querySelector('#pediatric-table tbody');
+  const countLabel = document.getElementById('pediatric-count');
+  tbody.innerHTML = '';
+
+  const facilities = data?.facilities ?? [];
+  countLabel.textContent = data
+    ? `15km圏に ${fmt(data.total)}施設`
+    : '';
+
+  if (facilities.length === 0) {
+    const tr = el('tr');
+    const td = el('td', 'empty-note', '15km圏に小児科が見つかりませんでした。');
+    td.colSpan = 4;
+    tr.append(td);
+    tbody.append(tr);
+    return;
+  }
+
+  facilities.forEach((row) => {
+    const tr = el('tr');
+    tr.append(el('td', null, row.name || '—'));
+    tr.append(el('td', null, row.facility_type || '—'));
+    tr.append(el('td', 'address-cell', row.address || '—'));
+    tr.append(el('td', 'num', `${fmt(row.distance_km, 1)}km`));
+    tbody.append(tr);
+  });
 }
 
 function renderRadar(scores, fit) {
@@ -1257,6 +1291,13 @@ function renderHighlights(metrics, fit) {
       label: '小学校 教員1人あたり児童数',
       value: metrics.pupils_per_teacher ? `${fmt(metrics.pupils_per_teacher, 1)}人` : '—',
       note: '少ないほど手厚い',
+    },
+    {
+      label: '小児科（15km圏・子ども1万人あたり）',
+      value: metrics.pediatric_clinics_catchment
+        ? `${fmt(metrics.pediatric_clinics_catchment, 1)}施設`
+        : '—',
+      note: '分母は15歳未満人口',
     },
     {
       label: '医師（15km圏・1万人あたり）',
@@ -1554,6 +1595,16 @@ function renderMetrics(metrics, years) {
     ['医師密度（自市内）', fmt(metrics.doctors_per_10k, 1) + '人/万人', years.doctors],
     ['医師密度（15km圏）', fmt(metrics.doctors_catchment, 1) + '人/万人', '圏内で集計'],
     ['病院密度（15km圏）', fmt(metrics.hospitals_catchment, 2) + '施設/万人', '圏内で集計'],
+    [
+      '小児科密度（15km圏）',
+      fmt(metrics.pediatric_clinics_catchment, 1) + '施設/子ども1万人',
+      '圏内で集計',
+    ],
+    [
+      '産科密度（15km圏）',
+      fmt(metrics.obstetric_clinics_catchment, 2) + '施設/万人',
+      '圏内で集計',
+    ],
     [
       '15km圏内の自治体数',
       fmt(metrics.catchment_municipalities) + '自治体'

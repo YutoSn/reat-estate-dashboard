@@ -847,3 +847,10 @@ input[type="range"]::-moz-range-thumb {
   .breakdown-bar { order: 3; grid-column: 1 / -1; }
   .breakdown-why { order: 4; grid-column: 1 / -1; }
 }
+
+/* 施設一覧の住所は長いので、狭い画面では折り返しつつ幅を抑える */
+.address-cell {
+  max-width: 22rem;
+  font-size: .82rem;
+  color: var(--text-soft);
+}

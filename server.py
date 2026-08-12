@@ -23,8 +23,9 @@ from config import (
     current_year,
     stage_years,
 )
-from src.analysis.geo import access_for
+from src.analysis.geo import access_for, municipality_points
 from src.analysis.metrics import (
+    CATCHMENT_SPECS,
     MIN_PRICE_DEALS,
     derive_metrics,
     latest_value,
@@ -56,6 +57,11 @@ app.add_middleware(
 # サーバーは参照しかしないので読み取り専用で開く。
 # 書き込み用に開くと populate.py と同時に動かせず、複数ワーカーでも競合する。
 db = DuckDBManager(DUCKDB_FILE, read_only=True)
+
+# 圏内で集計している指標。内訳（圏内の自治体数）を画面に添えるのに使う。
+CATCHMENT_METRIC_KEYS = tuple(
+    f"{spec.supply_key}_catchment" for spec in CATCHMENT_SPECS
+)
 
 
 def _clean(value: Any) -> Any:
@@ -223,7 +229,7 @@ def get_municipality(city_code: str):
                 {"label": "うち統計が未取得（圏内から除外）",
                  "value": missing, "unit": "自治体", "year": None}
             )
-        for key in ("doctors_catchment", "hospitals_catchment"):
+        for key in CATCHMENT_METRIC_KEYS:
             extra_inputs.setdefault(key, []).extend(entries)
 
     # 各指標の計算に使った統計値を、観測年つきでそのまま返す。
@@ -256,6 +262,37 @@ def get_municipality(city_code: str):
 def get_district_summary(city_code: str, min_deals: int = Query(5, ge=1)):
     """市区町村内の地区別の住宅地単価ランキング。"""
     return _records(db.get_district_summary(city_code, min_deals=min_deals))
+
+
+@app.get("/api/municipality/{city_code}/pediatrics")
+def get_pediatric_facilities(
+    city_code: str,
+    radius_km: float = Query(CATCHMENT_RADIUS_KM, gt=0, le=50),
+    limit: int = Query(40, ge=1, le=200),
+):
+    """市区町村の代表点から近い順に、小児科を標榜する医療機関を返す。
+
+    密度の数字だけだと「本当に近くにあるのか」が分からないので、
+    実際の施設名と距離を出せるようにしている。
+    """
+    point = municipality_points().get(city_code)
+    if point is None:
+        raise HTTPException(status_code=404, detail="代表点がありません")
+
+    latitude, longitude = point
+    facilities = db.get_facilities_near(
+        latitude, longitude, radius_km, pediatric_only=True
+    )
+    records = _records(facilities.head(limit))
+    for record in records:
+        if record.get("distance_km") is not None:
+            record["distance_km"] = round(record["distance_km"], 1)
+    return {
+        "city_code": city_code,
+        "radius_km": radius_km,
+        "total": int(len(facilities)),
+        "facilities": records,
+    }
 
 
 @app.get("/api/district_trend")
