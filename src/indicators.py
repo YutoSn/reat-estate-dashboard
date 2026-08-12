@@ -10,6 +10,20 @@ e-Stat「社会・人口統計体系（市区町村データ 基礎データ）�
 
 過去に I5101 を「小学校数」として扱っていたが、実際には「病院数」であり
 全面的に誤っていた。ここでは getMetaInfo で実データと突き合わせた上で定義している。
+
+なお git履歴（d966b52 以前）には次のマッピングが残っている。**流用しないこと。**
+
+    I5101 → elementary_schools   実際は 病院数
+    I5102 → junior_high_schools  実際は 一般診療所数
+    I6100 → libraries            実際は 医師数
+    J4403 → pediatricians        未検証
+    J2506 / I510110 / I5103      未検証
+
+現行カタログと突き合わせられる3件はすべて誤っていた。同じ表にある
+`J4403`（小児科医師数として画面に出していた）にも根拠は無い。
+診療科別の指標を足すときは、必ず getMetaInfo で確認してから定義する。
+
+    python scripts/list_estat_categories.py 0000020209 --grep 小児科
 """
 
 from typing import NamedTuple
