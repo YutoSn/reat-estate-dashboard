@@ -150,6 +150,8 @@ async function init() {
 
   document.getElementById('rank-pref').addEventListener('change', loadRanking);
   document.getElementById('rank-size').addEventListener('change', renderRanking);
+  document.getElementById('rank-station').addEventListener('change', renderRanking);
+  document.getElementById('rank-commerce').addEventListener('change', renderRanking);
   await loadRanking();
 
   setupDetailView();
@@ -830,6 +832,8 @@ function renderRanking() {
   tbody.innerHTML = '';
 
   const minPop = Number(document.getElementById('rank-size').value || 0);
+  const minStation = Number(document.getElementById('rank-station').value || 0);
+  const minCommerce = Number(document.getElementById('rank-commerce').value || 0);
   const excludeWeak = state.balance.floor > 0 && state.balance.exclude;
   const rows = state.ranking
     .map((row) => {
@@ -839,6 +843,10 @@ function renderRanking() {
     })
     .filter((row) => row._composite !== null)
     .filter((row) => !minPop || (row.raw_pop_total ?? 0) >= minPop)
+    // 「町内に駅がある」は代表駅の乗降客数で判定する。駅が無い自治体には
+    // populate 時に 0 を入れてあるので、1以上あるかを見れば足りる。
+    .filter((row) => !minStation || (row.raw_station_passengers_max ?? 0) >= minStation)
+    .filter((row) => !minCommerce || (row.raw_commerce_density ?? 0) >= minCommerce)
     // 年収を消したときに絞り込みだけが残って全件消えないよう、両方が立っているときだけ効かせる
     .filter((row) => !onlyAffordable() || row._fit?.withinBudget)
     .filter((row) => !excludeWeak || !row._detail.belowFloor)
@@ -1293,6 +1301,23 @@ function renderHighlights(metrics, fit) {
       note: '少ないほど手厚い',
     },
     {
+      label: '町内の代表駅',
+      value: metrics.station_passengers_max
+        ? `${fmt(metrics.station_passengers_max / 10000, 1)}万人/日`
+        : '駅なし',
+      note: metrics.station_passengers_max
+        ? `町内に${fmt(metrics.station_count)}駅`
+        : '町内に鉄道駅がありません',
+      tone: metrics.station_passengers_max ? undefined : 'warn',
+    },
+    {
+      label: '商業施設の密度',
+      value: metrics.commerce_density
+        ? `${fmt(metrics.commerce_density, 0)}所/km²`
+        : '—',
+      note: '可住地1km²あたりの店舗・飲食・サービス',
+    },
+    {
       label: '小児科（15km圏・子ども1万人あたり）',
       value: metrics.pediatric_clinics_catchment
         ? `${fmt(metrics.pediatric_clinics_catchment, 1)}施設`
@@ -1613,6 +1638,14 @@ function renderMetrics(metrics, years) {
       metrics.catchment_missing ? '県外を含むため過小の可能性' : '圏内すべて集計済み',
     ],
     ['診療所密度（自市内）', fmt(metrics.clinics_per_10k, 1) + '施設/万人', years.clinics],
+    [
+      '町内の駅数',
+      fmt(metrics.station_count) + '駅',
+      metrics.station_count ? '2023年度' : '鉄道駅なし',
+    ],
+    ['代表駅の乗降客数', fmt(metrics.station_passengers_max) + '人/日', '2023年度'],
+    ['商業施設の密度', fmt(metrics.commerce_density, 0) + '所/km²', '2021年'],
+    ['商業事業所数', fmt(metrics.commerce_shops) + '所', '2021年'],
     ['一戸建比率', fmt(metrics.detached_ratio, 1) + '%', years.dwellings_occupied],
     ['持ち家比率', fmt(metrics.ownership_ratio, 1) + '%', years.dwellings_occupied],
     ['社会増減', fmtSigned(metrics.net_migration_rate, 1) + '人/千人', years.pop_total],

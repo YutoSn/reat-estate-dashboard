@@ -206,6 +206,31 @@ def derive_metrics(
         pop_total, habitable_ha / 100 if habitable_ha else None
     )
 
+    # 駅。populate 時に「駅が無ければ0」を入れてあるので、ここでは欠測に
+    # 落とさずそのまま使う。駅が無いのはデータが取れなかったのではなく、
+    # 本当に鉄道が通っていないという事実だから。
+    metrics["station_passengers_max"] = val("station_passengers_max")
+    metrics["station_passengers_total"] = val("station_passengers_total")
+    metrics["station_count"] = val("station_count")
+
+    # 商業の厚み。
+    # 人口で割ると、人口が少ない観光地や、ショッピングセンターが1つある町が
+    # 上位に来てしまう（箱根町80.2所/千人 > 世田谷区11.5所/千人）。
+    # 「買い物に困らないか」は店がどれだけ密に集まっているかなので、
+    # 可住地面積あたりで測る。
+    shops = [val("retail_shops"), val("dining_shops"), val("service_shops")]
+    shop_total = (
+        sum(s for s in shops if s is not None)
+        if any(s is not None for s in shops)
+        else None
+    )
+    metrics["commerce_shops"] = shop_total
+    metrics["commerce_density"] = _safe_ratio(
+        shop_total, habitable_ha / 100 if habitable_ha else None
+    )
+    metrics["commerce_per_1k"] = _safe_ratio(shop_total, pop_total, 1000)
+    metrics["retail_per_1k"] = _safe_ratio(val("retail_shops"), pop_total, 1000)
+
     # --- 住宅・価格 -------------------------------------------------------
     metrics["land_unit_price"] = land_unit_price
     metrics["land_price_change_10y"] = land_price_change

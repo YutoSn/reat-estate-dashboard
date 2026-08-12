@@ -82,6 +82,13 @@ INDICATORS: list[Indicator] = [
     # --- 面積（密度計算用） -----------------------------------------------
     Indicator("habitable_area", DATASET_NATURE, "B1103", "可住地面積", "ha", "geography"),
 
+    # --- 商業の厚み -------------------------------------------------------
+    # 「駅前が発展しているか」「買い物に困らないか」を、事業所の数で見る。
+    # 経済センサスの民営事業所数（2021年）。
+    Indicator("retail_shops", DATASET_ECONOMY, "C210843", "小売業事業所数", "所", "commerce"),
+    Indicator("dining_shops", DATASET_ECONOMY, "C210847", "宿泊業・飲食サービス事業所数", "所", "commerce"),
+    Indicator("service_shops", DATASET_ECONOMY, "C210848", "生活関連サービス・娯楽業事業所数", "所", "commerce"),
+
     # --- 自治体の財政体力と子育て投資 -------------------------------------
     Indicator("fiscal_index", DATASET_ADMIN, "D2201", "財政力指数", "-", "finance"),
     Indicator("child_welfare_exp", DATASET_ADMIN, "D3203033", "児童福祉費", "千円", "finance"),

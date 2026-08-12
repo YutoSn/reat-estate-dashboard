@@ -22,6 +22,9 @@ class MetricSpec(NamedTuple):
     unit: str = ""         # 派生指標そのものの単位
     formula: str = ""      # 計算式（画面にそのまま出す）
     inputs: tuple[str, ...] = ()  # 計算に使う e-Stat 指標のキー
+    # 値が0のとき「順位の最下位」ではなく「無い」と扱い、0点にするか。
+    # 駅のように、有る／無いが決定的に効く指標で使う。
+    zero_means_absent: bool = False
 
     @property
     def digits(self) -> int:
@@ -122,11 +125,32 @@ METRIC_SPECS: list[MetricSpec] = [
         inputs=("libraries", "pop_total"),
     ),
 
-    # --- 利便性（都心・中心都市へのアクセス） -----------------------------
+    # --- 利便性（鉄道・商業・都心へのアクセス） ---------------------------
+    # 直線距離だけで測ると、鉄道が通っていない町が「都心に近い」と出てしまう。
+    # 日の出町は東京駅から直線45kmだが町内に駅が1つも無く、最寄りは町外2.8kmの
+    # 武蔵五日市駅（1日9千人）。実際に使える鉄道の規模を主指標にする。
+    MetricSpec(
+        "station_passengers_max", "代表駅の規模", True, "convenience",
+        "市区町村内でいちばん大きい駅の1日あたり乗降客数。駅前がどれだけ"
+        "発展しているかの目安になる。**町内に駅が1つも無ければ0点**。",
+        unit="人/日",
+        formula="市区町村内の駅のうち、乗降客数が最大のもの（駅が無ければ0）",
+        inputs=("station_passengers_max",),
+        zero_means_absent=True,
+    ),
+    MetricSpec(
+        "commerce_density", "商業施設の充実度", True, "convenience",
+        "可住地1km²あたりの小売店・飲食店・生活関連サービスの事業所数。"
+        "人口で割ると、人口の少ない観光地やショッピングセンターが1つある町が"
+        "上位に来てしまうため、店がどれだけ密に集まっているかで測る。",
+        unit="所/km²",
+        formula="（小売業＋宿泊飲食＋生活関連サービスの事業所数）÷（可住地面積(ha)÷100）",
+        inputs=("retail_shops", "dining_shops", "service_shops", "habitable_area"),
+    ),
     MetricSpec(
         "tokyo_distance_km", "東京都心への近さ", False, "convenience",
-        "東京駅までの直線距離。通勤先としても、新幹線でつながる先としても基準になる。"
-        "路線網は反映していないので、目安として見る。",
+        "東京駅までの直線距離。鉄道の路線網も所要時間も反映していないので、"
+        "実際の通いやすさは代表駅の規模と併せて見る。",
         unit="km",
         formula="市区町村の代表点から東京駅までの大圏距離",
     ),
@@ -137,13 +161,8 @@ METRIC_SPECS: list[MetricSpec] = [
         unit="km",
         formula="代表点から8つの主要ターミナルまでの大圏距離のうち最小のもの",
     ),
-    MetricSpec(
-        "pop_density_habitable", "生活利便施設の集積", True, "convenience",
-        "可住地1km²あたりの人口。高いほど店・駅・病院が徒歩圏にそろいやすい。",
-        unit="人/km²",
-        formula="総人口 ÷（可住地面積(ha) ÷ 100）",
-        inputs=("pop_total", "habitable_area"),
-    ),
+    # 可住地人口密度は「商業施設の充実度」とほぼ同じものを測ってしまうので、
+    # スコアには入れず実数の参照だけに留めている（raw_pop_density_habitable）。
 
     # --- 将来の見通し -----------------------------------------------------
     MetricSpec(
@@ -246,7 +265,16 @@ def score_table(metric_df: pd.DataFrame) -> pd.DataFrame:
             continue
         # 小→大 のパーセンタイル。低いほど良い指標は昇順を反転させる
         ranked = series.rank(pct=True, ascending=spec.higher_is_better)
-        scores[f"score_{spec.key}"] = (ranked * 100).round(1)
+        column = (ranked * 100).round(1)
+
+        # 値ゼロを「無い」と読むべき指標は、順位に混ぜず 0 点にする。
+        # 駅が1つも無い自治体は67ある。順位で並べると全部が同率になり、
+        # 402件中の下位67件＝17点前後がついてしまうが、実態は
+        # 「鉄道が使えない」であって17点分の価値はない。
+        if spec.zero_means_absent:
+            column = column.mask(series.fillna(0) <= 0, 0.0)
+
+        scores[f"score_{spec.key}"] = column
 
     # 観点ごとに、取得できた指標の平均を取る
     for dimension in DIMENSIONS:

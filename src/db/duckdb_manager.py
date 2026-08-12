@@ -115,6 +115,21 @@ class DuckDBManager:
             )
             """
         )
+        # 駅は data/stations.csv から読み込む。所属市区町村は住所データの
+        # 町丁目への最近傍で決めてあり、ここでは持ち回るだけ。
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS stations (
+                municipality_code VARCHAR,
+                station_name      VARCHAR,
+                operator          VARCHAR,
+                line              VARCHAR,
+                latitude          DOUBLE,
+                longitude         DOUBLE,
+                passengers        BIGINT
+            )
+            """
+        )
         # 医療機関は施設単位で持つ。診療科目の判定ルールを変えたときに
         # 取り直さずに数え直せるよう、生の科目文字列も残しておく。
         conn.execute(
@@ -176,6 +191,53 @@ class DuckDBManager:
         ]
         conn.register("df_land", df[columns])
         conn.execute(f"INSERT INTO land_prices SELECT {', '.join(columns)} FROM df_land")
+
+    def replace_stations(self, df: pd.DataFrame) -> None:
+        columns = [
+            "municipality_code", "station_name", "operator", "line",
+            "latitude", "longitude", "passengers",
+        ]
+        self._conn.execute("DELETE FROM stations")
+        self._conn.register("df_stations", df[columns])
+        self._conn.execute(
+            f"INSERT INTO stations SELECT {', '.join(columns)} FROM df_stations"
+        )
+
+    def get_station_summary(self) -> pd.DataFrame:
+        """市区町村ごとの駅の規模。
+
+        同じ駅でも路線ごとにレコードが分かれるので、まず駅名でまとめてから
+        数える。乗降客数は事業者が違えば別計上なので合計してよい。
+        """
+        query = """
+            WITH per_station AS (
+                SELECT municipality_code, station_name,
+                       SUM(passengers) AS passengers
+                FROM stations
+                GROUP BY municipality_code, station_name
+            )
+            SELECT
+                municipality_code,
+                COUNT(*)         AS station_count,
+                SUM(passengers)  AS station_passengers_total,
+                MAX(passengers)  AS station_passengers_max
+            FROM per_station
+            GROUP BY municipality_code
+        """
+        return self._query(query)
+
+    def get_stations(self, city_code: str) -> pd.DataFrame:
+        query = """
+            SELECT station_name,
+                   STRING_AGG(DISTINCT operator, '・') AS operators,
+                   STRING_AGG(DISTINCT line, '・')     AS lines,
+                   SUM(passengers)                     AS passengers
+            FROM stations
+            WHERE municipality_code = ?
+            GROUP BY station_name
+            ORDER BY passengers DESC, station_name
+        """
+        return self._query(query, [city_code])
 
     def replace_stats_for_indicators(
         self, df: pd.DataFrame, indicators: list[str]

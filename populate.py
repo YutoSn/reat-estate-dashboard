@@ -55,6 +55,12 @@ EXCLUDED_TRADE_TYPES = {"農地", "林地"}
 # 統計テーブルに入れるときの「観測年」として使い、画面にもこの年で出す。
 MEDICAL_DATA_YEAR = 2024
 
+# 駅の乗降客数データ（国土数値情報 S12）の最新年度。
+STATION_DATA_YEAR = 2023
+
+# 駅インデックス。scripts/build_station_index.py が生成する。
+STATION_FILE = "data/stations.csv"
+
 
 def _log(message: str) -> None:
     print(message, flush=True)
@@ -207,6 +213,75 @@ def populate_land_prices(db: DuckDBManager, api: RealEstateLibraryAPI) -> None:
         _log(f"  {pref_code}: {len(df):,} 件を登録（累計 {fetched:,}）")
 
     _log(f"  不動産取引 {fetched:,} 行を登録")
+
+
+def populate_stations(db: DuckDBManager) -> None:
+    """data/stations.csv を読み込む。
+
+    駅は年に数えるほどしか増減せず、所属市区町村の判定に住所データ（35MB）が
+    要るので、取得と判定は scripts/build_station_index.py に分けてある。
+    ここは出来上がったCSVを取り込むだけ。
+    """
+    if not os.path.exists(STATION_FILE):
+        _log(
+            f"  {STATION_FILE} がありません。"
+            "python scripts/build_station_index.py で生成してください。"
+        )
+        return
+
+    df = pd.read_csv(STATION_FILE, dtype={"municipality_code": str})
+    df["passengers"] = pd.to_numeric(df["passengers"], errors="coerce").fillna(0)
+    db.replace_stations(df)
+
+    summary = db.get_station_summary()
+    with_station = summary[
+        summary["municipality_code"].str[:2].isin(TARGET_PREFECTURE_CODES)
+    ]
+    _log(
+        f"  駅 {len(df):,} レコードを登録"
+        f"（対象8都県で駅を持つ市区町村 {len(with_station)}）"
+    )
+    _store_station_stats(db)
+
+
+def _store_station_stats(db: DuckDBManager) -> None:
+    """駅の規模を統計テーブルに指標として書き込む。
+
+    駅が1つも無い市区町村は「欠測」ではなく **0** を入れる。
+    データが取れなかったのではなく、本当に駅が無いという事実だからだ。
+    """
+    summary = db.get_station_summary().set_index("municipality_code")
+    rows = []
+    for city in db.get_cities_all():
+        code = city["municipality_code"]
+        if code in summary.index:
+            record = summary.loc[code]
+            values = {
+                "station_count": float(record["station_count"]),
+                "station_passengers_total": float(record["station_passengers_total"]),
+                "station_passengers_max": float(record["station_passengers_max"]),
+            }
+        else:
+            values = {
+                "station_count": 0.0,
+                "station_passengers_total": 0.0,
+                "station_passengers_max": 0.0,
+            }
+        for indicator, value in values.items():
+            rows.append(
+                {
+                    "municipality_code": code,
+                    "year": STATION_DATA_YEAR,
+                    "indicator": indicator,
+                    "value": value,
+                }
+            )
+
+    db.replace_stats_for_indicators(
+        pd.DataFrame(rows),
+        ["station_count", "station_passengers_total", "station_passengers_max"],
+    )
+    _log(f"  駅の規模を統計に反映（{len(rows):,} 行）")
 
 
 def populate_medical_facilities(db: DuckDBManager, api: MedicalFacilityAPI) -> None:
@@ -406,10 +481,14 @@ def main() -> int:
     parser.add_argument("--stats", action="store_true", help="e-Stat 統計のみ")
     parser.add_argument("--prices", action="store_true", help="不動産取引のみ")
     parser.add_argument("--medical", action="store_true", help="医療機関のみ")
+    parser.add_argument("--stations", action="store_true",
+                        help="駅インデックスの取り込みのみ")
     parser.add_argument("--scores", action="store_true", help="スコア再計算のみ")
     args = parser.parse_args()
 
-    run_all = not (args.stats or args.prices or args.medical or args.scores)
+    run_all = not (
+        args.stats or args.prices or args.medical or args.stations or args.scores
+    )
 
     load_dotenv()
     estat_app_id = os.getenv("E_STAT_APP_ID")
@@ -441,13 +520,18 @@ def main() -> int:
         else:
             populate_land_prices(db, RealEstateLibraryAPI(real_estate_key))
 
+    if run_all or args.stations:
+        _log("駅インデックスを取り込み中...")
+        populate_stations(db)
+
     if run_all or args.medical:
         if not real_estate_key:
             _log("REAL_ESTATE_LIBRARY_API_KEY が未設定のため医療機関取得をスキップ")
         else:
             populate_medical_facilities(db, MedicalFacilityAPI(real_estate_key))
 
-    if run_all or args.scores or args.stats or args.prices or args.medical:
+    if (run_all or args.scores or args.stats or args.prices
+            or args.medical or args.stations):
         compute_scores(db)
 
     _log("\n--- テーブル件数 ---")
