@@ -7,7 +7,7 @@ from typing import Any
 import pandas as pd
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Query, Response
+from fastapi import Body, FastAPI, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -18,6 +18,7 @@ from config import (
     CATCHMENT_RADIUS_KM,
     DUCKDB_FILE,
     REGIONAL_HUBS,
+    SITE_MODEL,
     STATS_HISTORY_YEARS,
     TARGET_PREFECTURE_CODES,
     TOKYO_CENTER,
@@ -39,6 +40,7 @@ from src.analysis.scoring import (
     metric_ranks,
     score_breakdown,
 )
+from src.db.candidate_store import CandidateStore, ValidationError
 from src.db.duckdb_manager import DuckDBManager
 from src.indicators import INDICATOR_BY_KEY, STALE_INDICATORS
 
@@ -58,6 +60,10 @@ app.add_middleware(
 # サーバーは参照しかしないので読み取り専用で開く。
 # 書き込み用に開くと populate.py と同時に動かせず、複数ワーカーでも競合する。
 db = DuckDBManager(DUCKDB_FILE, read_only=True)
+
+# 候補地点だけは書き込みが要るので、DuckDB とは別のJSONファイルに持つ
+# （理由は src/db/candidate_store.py の冒頭）。
+candidates = CandidateStore()
 
 # 圏内で集計している指標。内訳（圏内の自治体数）を画面に添えるのに使う。
 CATCHMENT_METRIC_KEYS = tuple(
@@ -136,6 +142,7 @@ def get_meta():
         # 世帯年収から予算を出すときの前提。フロントはここを唯一の定義として使う。
         "budget_model": BUDGET_MODEL,
         "balance_model": BALANCE_MODEL,
+        "site_model": SITE_MODEL,
         # ローン試算の前提。予算判定と同じ値を使うのでここが唯一の定義。
         "loan_model": LOAN_MODEL,
         "access": {
@@ -284,7 +291,7 @@ def get_pediatric_facilities(
 
     latitude, longitude = point
     facilities = db.get_facilities_near(
-        latitude, longitude, radius_km, pediatric_only=True
+        latitude, longitude, radius_km, specialty="pediatric"
     )
     records = _records(facilities.head(limit))
     for record in records:
@@ -306,6 +313,117 @@ def get_district_trend(city_code: str, district_name: str):
         "district_name": district_name,
         "trend": _price_records(db.get_price_trend(city_code, district_name)),
     }
+
+
+# ---------------------------------------------------------------- 候補地点
+# 市区町村まで絞ったあとは「その地点から何が何km」が知りたくなる。
+# 代表点からの距離ではなく、物件そのものの座標から測る。
+
+
+def _round_km(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """距離はkmのまま小数1桁に丸める。徒歩何分には換算しない。
+
+    このリポジトリは一貫して所要時間に換算しない（src/analysis/geo.py 参照）。
+    直線距離を分に直すと、坂も踏切も信号も無かったことになるため。
+    """
+    for record in records:
+        if record.get("distance_km") is not None:
+            record["distance_km"] = round(record["distance_km"], 2)
+    return records
+
+
+@app.get("/api/site/nearby")
+def get_site_nearby(
+    lat: float = Query(..., description="緯度"),
+    lon: float = Query(..., description="経度"),
+    radius_km: float = Query(SITE_MODEL["radius_km"], gt=0,
+                             le=SITE_MODEL["radius_max"]),
+    city_code: str | None = None,
+    district: str | None = None,
+):
+    """指定座標の周辺にある駅・医療機関と、その地域の土地単価。
+
+    city_code は自動判定しない。市区町村の代表点は1市区町村1点しかなく、
+    市境の物件は隣の市に寄ってしまう。登録時に選ばせた値を受け取る。
+    """
+    limit = SITE_MODEL["list_limit"]
+
+    stations = db.get_stations_near(lat, lon, radius_km)
+    pediatric = db.get_facilities_near(lat, lon, radius_km, specialty="pediatric")
+    obstetric = db.get_facilities_near(lat, lon, radius_km, specialty="obstetric")
+    hospitals = db.get_facilities_near(
+        lat, lon, radius_km, specialty=None, facility_types=["病院"]
+    )
+
+    land: dict[str, Any] = {"city_code": city_code, "district": district}
+    if city_code:
+        latest = db.get_latest_land_price_by_city(years=3)
+        row = latest[latest["municipality_code"] == city_code]
+        if not row.empty and row.iloc[0]["deals"] >= MIN_PRICE_DEALS:
+            land["city_unit_price"] = _clean(row.iloc[0]["land_unit_price"])
+            land["city_deals"] = _clean(row.iloc[0]["deals"])
+        # 地区は座標からは決められない（取引データに座標が無い）。
+        # 登録時に選んでもらった地区名があるときだけ、その地区の単価を出す。
+        if district:
+            summary = db.get_district_summary(city_code, min_deals=1)
+            hit = summary[summary["district_name"] == district]
+            if not hit.empty:
+                land["district_unit_price"] = _clean(hit.iloc[0]["land_unit_price"])
+                land["district_deals"] = _clean(hit.iloc[0]["deals"])
+
+    return {
+        "latitude": lat,
+        "longitude": lon,
+        "radius_km": radius_km,
+        # 距離はすべて直線距離。画面にもそう書く。
+        "distance_basis": "直線距離",
+        "stations": _round_km(_records(stations.head(limit))),
+        "pediatric": {
+            "total": int(len(pediatric)),
+            "facilities": _round_km(_records(pediatric.head(limit))),
+        },
+        "obstetric": {
+            "total": int(len(obstetric)),
+            "facilities": _round_km(_records(obstetric.head(limit))),
+        },
+        "hospitals": {
+            "total": int(len(hospitals)),
+            "facilities": _round_km(_records(hospitals.head(limit))),
+        },
+        "land": land,
+    }
+
+
+@app.get("/api/sites")
+def list_sites():
+    """登録済みの候補地点。"""
+    return {"sites": candidates.load()}
+
+
+@app.post("/api/sites")
+def create_site(payload: dict[str, Any] = Body(...)):
+    try:
+        return candidates.add(payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.put("/api/sites/{site_id}")
+def update_site(site_id: str, payload: dict[str, Any] = Body(...)):
+    try:
+        record = candidates.update(site_id, payload)
+    except ValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if record is None:
+        raise HTTPException(status_code=404, detail="候補地点が見つかりません")
+    return record
+
+
+@app.delete("/api/sites/{site_id}")
+def delete_site(site_id: str):
+    if not candidates.remove(site_id):
+        raise HTTPException(status_code=404, detail="候補地点が見つかりません")
+    return {"deleted": site_id}
 
 
 # ------------------------------------------------------------------ 比較

@@ -23,6 +23,7 @@
         <button class="tab is-active" data-view="explore" role="tab">探す</button>
         <button class="tab" data-view="detail" role="tab">詳しく見る・比べる</button>
         <button class="tab" data-view="loan" role="tab">ローン試算</button>
+        <button class="tab" data-view="site" role="tab">候補地点</button>
         <button class="tab" data-view="hazard" role="tab">災害リスク</button>
       </nav>
     </div>
@@ -462,6 +463,137 @@
           金融機関の審査で決まります。ここでの計算は目安です。
         </p>
       </div>
+    </section>
+
+    <!-- ========================== 候補地点 ========================== -->
+    <section class="view" id="view-site">
+      <div class="panel">
+        <h2>候補地点を登録する</h2>
+        <p class="panel-note">
+          市区町村まで絞ったあとは「その地点から何が何km」が効きます。
+          代表点ではなく <strong>物件の座標</strong> から測ります。
+          住所ではなく緯度経度を直接入れるか、地図をクリックして座標を取ってください。
+          <strong>市区町村は自動判定しません</strong>。市境の物件は代表点への最近傍だと
+          隣の市に寄るため、登録時に選んでいただきます。
+        </p>
+        <div class="site-form">
+          <label class="field">
+            <span>呼び名</span>
+            <input type="text" class="input" id="site-name" placeholder="例: 大宮区A物件" />
+          </label>
+          <label class="field">
+            <span>住所（任意）</span>
+            <input type="text" class="input" id="site-address" />
+          </label>
+          <label class="field">
+            <span>緯度</span>
+            <input type="number" class="input" id="site-lat" step="0.000001" placeholder="35.906296" />
+          </label>
+          <label class="field">
+            <span>経度</span>
+            <input type="number" class="input" id="site-lon" step="0.000001" placeholder="139.623752" />
+          </label>
+          <label class="field">
+            <span>都県</span>
+            <select id="site-pref" class="select"></select>
+          </label>
+          <label class="field">
+            <span>市区町村</span>
+            <select id="site-city" class="select"></select>
+          </label>
+          <label class="field">
+            <span>地区（任意）</span>
+            <select id="site-district" class="select"></select>
+          </label>
+          <label class="field">
+            <span>価格</span>
+            <span class="input-unit">
+              <input type="number" class="input" id="site-price" min="0" step="10" />
+              <em>万円</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>土地面積</span>
+            <span class="input-unit">
+              <input type="number" class="input" id="site-land" min="0" step="1" />
+              <em>㎡</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>建物面積（任意）</span>
+            <span class="input-unit">
+              <input type="number" class="input" id="site-building" min="0" step="1" />
+              <em>㎡</em>
+            </span>
+          </label>
+          <label class="field">
+            <span>掲載ページ（任意）</span>
+            <input type="url" class="input" id="site-url" />
+          </label>
+          <label class="field">
+            <span>状態</span>
+            <select id="site-status" class="select"></select>
+          </label>
+        </div>
+        <label class="field site-notes-field">
+          <span>メモ（現地で気づいたこと）</span>
+          <textarea class="input" id="site-notes" rows="2"></textarea>
+        </label>
+        <div class="site-actions">
+          <button class="btn" id="site-save">登録する</button>
+          <button class="btn-ghost" id="site-cancel" hidden>編集をやめる</button>
+          <span class="site-error" id="site-error" hidden></span>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="panel-head">
+          <h2>地図</h2>
+          <span class="panel-hint">クリックすると座標が入力欄に入ります</span>
+        </div>
+        <p class="panel-note">
+          ハザードのレイヤーと重ねられます。候補地点は登録すると地図に出ます。
+        </p>
+        <div class="map-wrap">
+          <div id="site-map"></div>
+        </div>
+      </div>
+
+      <div class="panel" id="site-nearby-panel" hidden>
+        <div class="panel-head">
+          <h2 id="site-nearby-title">周辺にあるもの</h2>
+          <label class="field inline-field">
+            <span>半径</span>
+            <select id="site-radius" class="select"></select>
+          </label>
+        </div>
+        <p class="panel-note">
+          <strong>すべて直線距離（km）です。</strong>徒歩何分には換算していません。
+          坂も踏切も信号も反映できないためです。
+        </p>
+        <div class="site-nearby" id="site-nearby"></div>
+      </div>
+
+      <div class="panel" id="site-compare-panel" hidden>
+        <div class="panel-head">
+          <h2>候補地点を比べる</h2>
+          <span class="panel-hint">行を押すと周辺照会を切り替えます</span>
+        </div>
+        <p class="panel-note">
+          <span class="origin-badge is-site">地点</span> はその座標から測った値、
+          <span class="origin-badge is-city">街</span> は所属市区町村の値です。
+          <strong>街の値は物件の評価ではありません</strong>。同じ市内なら
+          どの物件でも同じ値になります。
+        </p>
+        <div class="table-scroll">
+          <table class="data-table" id="site-table">
+            <thead></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+
+      <p class="empty-note" id="site-empty">まだ候補地点がありません。</p>
     </section>
 
     <!-- ========================== 災害リスク ========================== -->

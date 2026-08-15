@@ -157,6 +157,7 @@ async function init() {
   setupDetailView();
   setupTrendControls();
   setupLoanView();
+  setupSiteView();
 }
 
 function setupTabs() {
@@ -167,6 +168,7 @@ function setupTabs() {
       tab.classList.add('is-active');
       document.getElementById(`view-${tab.dataset.view}`).classList.add('is-active');
       if (tab.dataset.view === 'hazard') ensureHazardMap();
+      if (tab.dataset.view === 'site') ensureSiteMap();
     });
   });
 }
@@ -2109,3 +2111,461 @@ init().catch((error) => {
     el('p', 'empty-note', `データの読み込みに失敗しました: ${error.message}`),
   );
 });
+
+// ---------------------------------------------------------------- 候補地点
+// 市区町村まで絞ったあとに効くのは「その地点から何が何km」。市区町村の
+// 代表点からではなく、物件そのものの座標から測る。
+//
+// 距離は必ず直線距離のまま出す。徒歩何分に換算しない
+// （src/analysis/geo.py と同じ方針。坂も踏切も信号も反映できないため）。
+
+const site = {
+  list: [],
+  editingId: null,
+  // 周辺照会を出している地点。編集中の地点とは別（見るだけの操作があるため）
+  focusId: null,
+  map: null,
+  markers: null,
+  leaflet: null,
+  radius: null,
+};
+
+function siteModel() {
+  return state.meta.site_model;
+}
+
+function setupSiteView() {
+  const model = siteModel();
+  site.radius = model.radius_km;
+
+  const statusSelect = document.getElementById('site-status');
+  model.statuses.forEach((s) => {
+    const option = el('option', null, s.label);
+    option.value = s.key;
+    statusSelect.append(option);
+  });
+  statusSelect.value = model.default_status;
+
+  const radiusSelect = document.getElementById('site-radius');
+  model.radius_options.forEach((km) => {
+    const option = el('option', null, `${km}km`);
+    option.value = String(km);
+    radiusSelect.append(option);
+  });
+  radiusSelect.value = String(site.radius);
+  radiusSelect.addEventListener('change', async () => {
+    site.radius = Number(radiusSelect.value);
+    // 表の小児科・産科の件数も半径で変わるので、キャッシュごと取り直す
+    site.list.forEach((item) => { item._nearby = null; });
+    await loadSites();
+    if (site.focusId) await showNearbyFor(site.focusId);
+    else await refreshNearbyFromForm();
+  });
+
+  const prefSelect = document.getElementById('site-pref');
+  prefSelect.innerHTML = '<option value="">選択してください</option>';
+  state.prefectures.forEach((pref) => {
+    const option = el('option', null, pref.name);
+    option.value = pref.code;
+    prefSelect.append(option);
+  });
+  prefSelect.addEventListener('change', async (event) => {
+    await loadCities(event.target.value, 'site-city');
+    document.getElementById('site-district').innerHTML =
+      '<option value="">指定しない</option>';
+  });
+  document.getElementById('site-city').addEventListener('change', (event) => {
+    loadSiteDistricts(event.target.value);
+  });
+
+  document.getElementById('site-save').addEventListener('click', saveSite);
+  document.getElementById('site-cancel').addEventListener('click', resetSiteForm);
+  loadSites();
+}
+
+/** 地区は取引データの地区名。座標からは決められないので選ばせる。 */
+async function loadSiteDistricts(cityCode) {
+  const select = document.getElementById('site-district');
+  select.innerHTML = '<option value="">指定しない</option>';
+  if (!cityCode) return;
+  const districts = await api(`/api/districts/${cityCode}`);
+  districts
+    .filter((d) => d.land_deals > 0)
+    .slice(0, 60)
+    .forEach((d) => {
+      const option = el('option', null, `${d.district_name}（${d.land_deals}件）`);
+      option.value = d.district_name;
+      select.append(option);
+    });
+}
+
+function siteFormValues() {
+  const num = (id) => {
+    const raw = document.getElementById(id).value;
+    return raw === '' ? null : Number(raw);
+  };
+  return {
+    name: document.getElementById('site-name').value,
+    address: document.getElementById('site-address').value,
+    latitude: num('site-lat'),
+    longitude: num('site-lon'),
+    municipality_code: document.getElementById('site-city').value,
+    district: document.getElementById('site-district').value,
+    price: num('site-price'),
+    land_area: num('site-land'),
+    building_area: num('site-building'),
+    url: document.getElementById('site-url').value,
+    status: document.getElementById('site-status').value,
+    notes: document.getElementById('site-notes').value,
+  };
+}
+
+function showSiteError(message) {
+  const box = document.getElementById('site-error');
+  box.textContent = message ?? '';
+  box.hidden = !message;
+}
+
+async function saveSite() {
+  const payload = siteFormValues();
+  const editing = site.editingId;
+  try {
+    const res = await fetch(editing ? `/api/sites/${editing}` : '/api/sites', {
+      method: editing ? 'PUT' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      showSiteError(body.detail || '保存できませんでした');
+      return;
+    }
+    const saved = await res.json();
+    showSiteError(null);
+    resetSiteForm();
+    await loadSites();
+    showNearbyFor(saved.id);
+  } catch (error) {
+    showSiteError(`保存できませんでした: ${error.message}`);
+  }
+}
+
+function resetSiteForm() {
+  site.editingId = null;
+  ['site-name', 'site-address', 'site-lat', 'site-lon', 'site-price',
+   'site-land', 'site-building', 'site-url', 'site-notes'].forEach((id) => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('site-status').value = siteModel().default_status;
+  document.getElementById('site-save').textContent = '登録する';
+  document.getElementById('site-cancel').hidden = true;
+  showSiteError(null);
+  renderSiteTable();
+}
+
+async function editSite(id) {
+  const found = site.list.find((s) => s.id === id);
+  if (!found) return;
+  site.editingId = id;
+  document.getElementById('site-name').value = found.name ?? '';
+  document.getElementById('site-address').value = found.address ?? '';
+  document.getElementById('site-lat').value = found.latitude ?? '';
+  document.getElementById('site-lon').value = found.longitude ?? '';
+  document.getElementById('site-price').value = found.price ?? '';
+  document.getElementById('site-land').value = found.land_area ?? '';
+  document.getElementById('site-building').value = found.building_area ?? '';
+  document.getElementById('site-url').value = found.url ?? '';
+  document.getElementById('site-notes').value = found.notes ?? '';
+  document.getElementById('site-status').value = found.status ?? siteModel().default_status;
+
+  const prefCode = (found.municipality_code || '').slice(0, 2);
+  document.getElementById('site-pref').value = prefCode;
+  await loadCities(prefCode, 'site-city');
+  document.getElementById('site-city').value = found.municipality_code ?? '';
+  await loadSiteDistricts(found.municipality_code);
+  document.getElementById('site-district').value = found.district ?? '';
+
+  document.getElementById('site-save').textContent = '更新する';
+  document.getElementById('site-cancel').hidden = false;
+  renderSiteTable();
+  showNearbyFor(id);
+}
+
+async function removeSite(id) {
+  await fetch(`/api/sites/${id}`, { method: 'DELETE' });
+  if (site.editingId === id) resetSiteForm();
+  if (site.focusId === id) {
+    site.focusId = null;
+    document.getElementById('site-nearby-panel').hidden = true;
+  }
+  await loadSites();
+}
+
+async function loadSites() {
+  const data = await api('/api/sites');
+  site.list = data.sites || [];
+  // 周辺照会と所属市区町村のスコアは、表を組み立てる前にまとめて取る
+  await Promise.all(site.list.map(async (item) => {
+    item._nearby = await fetchNearby(item);
+  }));
+  renderSiteTable();
+  renderSiteMarkers();
+  // 戻ってきたときに表だけ出ていると毎回クリックが要るので、1件目を開いておく
+  if (!site.focusId && site.list.length > 0) {
+    await showNearbyFor(site.list[0].id);
+  }
+}
+
+function fetchNearby({ latitude, longitude, municipality_code: city, district }) {
+  const params = new URLSearchParams({
+    lat: latitude, lon: longitude, radius_km: site.radius,
+  });
+  if (city) params.set('city_code', city);
+  if (district) params.set('district', district);
+  return api(`/api/site/nearby?${params}`).catch(() => null);
+}
+
+async function refreshNearbyFromForm() {
+  const values = siteFormValues();
+  if (!values.latitude || !values.longitude) return;
+  const nearby = await fetchNearby(values);
+  renderNearby(values.name || '入力中の地点', nearby, values);
+}
+
+async function showNearbyFor(id) {
+  const found = site.list.find((s) => s.id === id);
+  if (!found) return;
+  site.focusId = id;
+  if (!found._nearby) found._nearby = await fetchNearby(found);
+  renderNearby(found.name, found._nearby, found);
+}
+
+function renderNearby(title, nearby, item) {
+  const panel = document.getElementById('site-nearby-panel');
+  const container = document.getElementById('site-nearby');
+  container.innerHTML = '';
+  if (!nearby) {
+    panel.hidden = true;
+    return;
+  }
+  panel.hidden = false;
+  document.getElementById('site-nearby-title').textContent = `${title} の周辺`;
+
+  const block = (heading, note, rows) => {
+    const box = el('div', 'nearby-block');
+    const head = el('div', 'nearby-head');
+    head.append(el('h3', null, heading));
+    if (note) head.append(el('span', 'nearby-note', note));
+    box.append(head);
+    if (rows.length === 0) {
+      box.append(el('p', 'empty-note', `半径${nearby.radius_km}km以内にありません。`));
+    } else {
+      const list = el('ul', 'nearby-list');
+      rows.forEach((row) => {
+        const li = el('li');
+        li.append(el('span', 'nearby-name', row.label));
+        if (row.sub) li.append(el('span', 'nearby-sub', row.sub));
+        li.append(el('span', 'nearby-distance', `${fmt(row.distance, 2)}km`));
+        list.append(li);
+      });
+      box.append(list);
+    }
+    container.append(box);
+  };
+
+  block('最寄り駅', `${nearby.stations.length}駅`, nearby.stations.map((s) => ({
+    label: s.station_name,
+    sub: `${s.operators}／${s.lines}　${fmt(s.passengers)}人/日`,
+    distance: s.distance_km,
+  })));
+  block('小児科', `${nearby.pediatric.total}件`,
+    nearby.pediatric.facilities.slice(0, 5).map((f) => ({
+      label: f.name, sub: f.facility_type, distance: f.distance_km,
+    })));
+  block('産科', `${nearby.obstetric.total}件`,
+    nearby.obstetric.facilities.slice(0, 5).map((f) => ({
+      label: f.name, sub: f.facility_type, distance: f.distance_km,
+    })));
+  block('病院', `${nearby.hospitals.total}件`,
+    nearby.hospitals.facilities.slice(0, 5).map((f) => ({
+      label: f.name, sub: f.beds ? `${fmt(f.beds)}床` : '', distance: f.distance_km,
+    })));
+
+  // 土地単価は「街の値」。地点の値ではないので出所を明示する。
+  const land = el('div', 'nearby-block');
+  land.append(el('h3', null, '住宅地の土地単価'));
+  const rows = el('ul', 'nearby-list');
+  const price = (label, value, deals, origin) => {
+    const li = el('li');
+    const name = el('span', 'nearby-name');
+    name.append(el('span', `origin-badge is-${origin}`, origin === 'city' ? '街' : '地区'));
+    name.append(el('span', null, ` ${label}`));
+    li.append(name);
+    li.append(el('span', 'nearby-sub', deals ? `取引${fmt(deals)}件` : ''));
+    li.append(el('span', 'nearby-distance',
+      value ? `${fmt(value / 10000, 1)}万円/㎡` : '—'));
+    rows.append(li);
+  };
+  price(cityName(item.municipality_code) || '所属市区町村',
+    nearby.land.city_unit_price, nearby.land.city_deals, 'city');
+  if (nearby.land.district) {
+    price(nearby.land.district, nearby.land.district_unit_price,
+      nearby.land.district_deals, 'district');
+  }
+  land.append(rows);
+  container.append(land);
+}
+
+function renderSiteTable() {
+  const panel = document.getElementById('site-compare-panel');
+  const empty = document.getElementById('site-empty');
+  const table = document.getElementById('site-table');
+  const thead = table.querySelector('thead');
+  const tbody = table.querySelector('tbody');
+  thead.innerHTML = '';
+  tbody.innerHTML = '';
+
+  if (site.list.length === 0) {
+    panel.hidden = true;
+    empty.hidden = false;
+    return;
+  }
+  panel.hidden = false;
+  empty.hidden = true;
+
+  // 出所を列見出しに出す。地点の値と街の値が混ざると
+  // 「この物件のスコア」と誤読されるため。
+  const columns = [
+    ['呼び名', null], ['状態', null],
+    ['価格', 'site'], ['土地面積', 'site'], ['坪単価', 'site'],
+    ['最寄り駅', 'site'], ['駅まで', 'site'], ['乗降客数', 'site'],
+    ['小児科', 'site'], ['産科', 'site'],
+    ['市区町村', 'city'], ['総合スコア', 'city'], ['街の土地単価', 'city'],
+    ['', null],
+  ];
+  const headRow = el('tr');
+  columns.forEach(([label, origin]) => {
+    const th = el('th', origin ? 'num' : null);
+    if (origin) {
+      th.append(el('span', `origin-badge is-${origin}`, origin === 'site' ? '地点' : '街'));
+      th.append(el('span', null, ` ${label}`));
+    } else {
+      th.textContent = label;
+    }
+    headRow.append(th);
+  });
+  thead.append(headRow);
+
+  const statusLabel = (key) =>
+    siteModel().statuses.find((s) => s.key === key)?.label ?? key;
+
+  site.list.forEach((item) => {
+    const nearby = item._nearby;
+    const station = nearby?.stations?.[0];
+    const scores = state.ranking.find(
+      (r) => r.municipality_code === item.municipality_code,
+    );
+    const composite = scores ? computeComposite(scores) : null;
+    const tsubo = item.price && item.land_area
+      ? (item.price / (item.land_area / 3.30578)) : null;
+
+    const tr = el('tr', item.id === site.editingId ? 'is-editing' : null);
+    const name = el('td');
+    const link = el('button', 'link-button', item.name);
+    link.addEventListener('click', () => showNearbyFor(item.id));
+    name.append(link);
+    if (item.notes) name.append(el('span', 'sub-label', item.notes));
+    tr.append(name);
+    tr.append(el('td', `site-status is-${item.status}`, statusLabel(item.status)));
+    tr.append(el('td', 'num', item.price ? `${fmt(item.price)}万円` : '—'));
+    tr.append(el('td', 'num', item.land_area ? `${fmt(item.land_area)}㎡` : '—'));
+    tr.append(el('td', 'num', tsubo ? `${fmt(tsubo, 1)}万円/坪` : '—'));
+    tr.append(el('td', 'num', station ? station.station_name : '—'));
+    tr.append(el('td', 'num', station ? `${fmt(station.distance_km, 2)}km` : '—'));
+    tr.append(el('td', 'num', station ? fmt(station.passengers) : '—'));
+    tr.append(el('td', 'num', nearby ? `${fmt(nearby.pediatric.total)}件` : '—'));
+    tr.append(el('td', 'num', nearby ? `${fmt(nearby.obstetric.total)}件` : '—'));
+    tr.append(el('td', 'num is-city-value', cityName(item.municipality_code)));
+    tr.append(el('td', 'num is-city-value', composite === null ? '—' : fmt(composite, 0)));
+    tr.append(el('td', 'num is-city-value',
+      nearby?.land?.city_unit_price
+        ? `${fmt(nearby.land.city_unit_price / 10000, 1)}万円/㎡` : '—'));
+
+    const actions = el('td', 'num');
+    const edit = el('button', 'link-button', '編集');
+    edit.addEventListener('click', () => editSite(item.id));
+    actions.append(edit);
+    const del = el('button', 'link-button is-danger', '削除');
+    del.addEventListener('click', () => removeSite(item.id));
+    actions.append(del);
+    tr.append(actions);
+    tbody.append(tr);
+  });
+}
+
+async function ensureSiteMap() {
+  if (site.map) {
+    setTimeout(() => site.map.invalidateSize(), 200);
+    return;
+  }
+  const [{ default: L }] = await Promise.all([
+    import('leaflet'),
+    import('leaflet/dist/leaflet.css'),
+  ]);
+  site.leaflet = L;
+
+  const map = L.map('site-map').setView([35.9, 139.6], 11);
+  site.map = map;
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap &copy; CARTO',
+  }).addTo(map);
+
+  // 候補地点の判断はハザードと不可分なので、同じ地図に重ねられるようにする
+  const overlays = {
+    洪水浸水想定区域: 'https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png',
+    土砂災害警戒区域: 'https://disaportaldata.gsi.go.jp/raster/05_dosekiryukeikaikuiki/{z}/{x}/{y}.png',
+    '地形分類（地盤リスク）': 'https://cyberjapandata.gsi.go.jp/xyz/experimental_landform/{z}/{x}/{y}.png',
+  };
+  const layers = {};
+  Object.entries(overlays).forEach(([name, url]) => {
+    layers[name] = L.tileLayer(url, { opacity: 0.7, attribution: '国土地理院' });
+  });
+  L.control.layers(null, layers, { collapsed: false }).addTo(map);
+
+  site.markers = L.layerGroup().addTo(map);
+
+  // 地図クリックで座標を取れるようにする。ジオコーディングAPIに依存しないため。
+  map.on('click', (event) => {
+    document.getElementById('site-lat').value = event.latlng.lat.toFixed(6);
+    document.getElementById('site-lon').value = event.latlng.lng.toFixed(6);
+    refreshNearbyFromForm();
+  });
+
+  renderSiteMarkers();
+  setTimeout(() => map.invalidateSize(), 200);
+}
+
+function renderSiteMarkers() {
+  if (!site.map || !site.markers) return;
+  const L = site.leaflet;
+  site.markers.clearLayers();
+  const points = [];
+  site.list.forEach((item) => {
+    if (!item.latitude || !item.longitude) return;
+    const marker = L.circleMarker([item.latitude, item.longitude], {
+      radius: 8,
+      color: cssVar('--site-marker'),
+      fillColor: cssVar('--site-marker'),
+      fillOpacity: 0.75,
+      weight: 2,
+    });
+    marker.bindPopup(
+      `<strong>${item.name}</strong><br>${item.price ? `${fmt(item.price)}万円<br>` : ''}`
+      + `${item.latitude.toFixed(5)}, ${item.longitude.toFixed(5)}`,
+    );
+    marker.on('click', () => showNearbyFor(item.id));
+    site.markers.addLayer(marker);
+    points.push([item.latitude, item.longitude]);
+  });
+  if (points.length > 0) site.map.fitBounds(points, { padding: [40, 40], maxZoom: 14 });
+}

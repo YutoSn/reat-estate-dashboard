@@ -44,6 +44,15 @@
   --chart-ink: #4a6273;
   --chart-grid: #dceaf4;
 
+  /* 候補地点。系列色（比較用の6色）とは別系統にする。
+     地点は「どれか1つ」ではなく「自分が置いた印」なので、
+     系列の色を借りると比較中の市区町村と混同する。 */
+  --site-marker: #b3357a;
+  --origin-site-bg: #fbe4f0;
+  --origin-site-text: #98275f;
+  --origin-city-bg: var(--accent-soft);
+  --origin-city-text: var(--accent);
+
   font-synthesis-weight: none;
 }
 
@@ -74,6 +83,10 @@
 
     --chart-ink: #a4bccb;
     --chart-grid: #2a3f4d;
+
+    --site-marker: #f090c0;
+    --origin-site-bg: #3d1f31;
+    --origin-site-text: #f4a3cd;
   }
 }
 
@@ -963,4 +976,100 @@ input[type="range"]::-moz-range-thumb {
 
 @media (max-width: 780px) {
   .loan-amount { font-size: 2rem; }
+}
+
+/* ---------------------------------------------------------- 候補地点 */
+.site-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: .8rem 1rem;
+  margin-top: .8rem;
+}
+.site-notes-field { margin-top: .8rem; }
+.site-notes-field textarea { resize: vertical; font-family: inherit; }
+.site-actions {
+  display: flex;
+  align-items: center;
+  gap: .8rem;
+  margin-top: .9rem;
+  flex-wrap: wrap;
+}
+.site-error { font-size: .82rem; color: var(--warm); }
+
+/* 値の出所。地点由来と市区町村由来を混ぜると
+   「この物件のスコア」と誤読されるので、必ず印を付ける。 */
+.origin-badge {
+  display: inline-block;
+  padding: .05rem .4rem;
+  border-radius: 999px;
+  font-size: .66rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.origin-badge.is-site,
+.origin-badge.is-district {
+  background: var(--origin-site-bg);
+  color: var(--origin-site-text);
+}
+.origin-badge.is-city {
+  background: var(--origin-city-bg);
+  color: var(--origin-city-text);
+}
+.data-table td.is-city-value { background: var(--accent-soft); }
+#site-table tr.is-editing { outline: 2px solid var(--site-marker); }
+/* 呼び名は折り返すと読めなくなるので幅を確保する。メモは折り返してよい。 */
+#site-table td:first-child { min-width: 10rem; }
+#site-table td:first-child .link-button { white-space: nowrap; }
+#site-table .sub-label {
+  display: block;
+  max-width: 14rem;
+  white-space: normal;
+}
+
+.site-status { font-size: .8rem; white-space: nowrap; }
+.site-status.is-shortlist { color: var(--accent); font-weight: 700; }
+.site-status.is-rejected { color: var(--text-faint); }
+.site-status.is-visited { color: var(--warm); }
+
+.link-button.is-danger { color: var(--warm); margin-left: .6rem; }
+
+.site-nearby {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: .8rem;
+}
+.nearby-block {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: .7rem .8rem;
+  background: var(--surface-alt);
+}
+.nearby-head { display: flex; align-items: baseline; gap: .5rem; }
+.nearby-block h3 { font-size: .88rem; margin: 0 0 .3rem; }
+.nearby-note { font-size: .74rem; color: var(--text-soft); }
+.nearby-list { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
+.nearby-list li {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0 .5rem;
+  font-size: .8rem;
+  align-items: baseline;
+}
+.nearby-name { font-weight: 600; }
+.nearby-sub {
+  grid-column: 1;
+  font-size: .72rem;
+  color: var(--text-soft);
+}
+.nearby-distance {
+  grid-row: 1;
+  grid-column: 2;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+#site-map { width: 100%; height: 440px; }
+
+@media (max-width: 640px) {
+  .site-form { grid-template-columns: 1fr 1fr; }
+  #site-map { height: 340px; }
 }

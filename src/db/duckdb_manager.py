@@ -290,32 +290,85 @@ class DuckDBManager:
         """
         return self._query(query)
 
+    # 半径内の距離を出す SQL 断片。緯度経度から大圏距離を直接計算する。
+    # DuckDB の spatial 拡張には依存しない（デプロイ先で拡張のロードに失敗すると
+    # アプリ全体が起動しなくなるため）。
+    _DISTANCE_KM = """
+        6371.0088 * 2 * asin(sqrt(
+            pow(sin(radians(latitude - ?) / 2), 2)
+            + cos(radians(?)) * cos(radians(latitude))
+              * pow(sin(radians(longitude - ?) / 2), 2)
+        ))
+    """
+
+    # 診療科の指定。真偽フラグを引数で増やしていくと組み合わせが破綻するので、
+    # 科の名前で受けて列に対応づける。列は populate 時に specialties.py が付ける。
+    SPECIALTY_COLUMNS = {
+        "pediatric": "is_pediatric",
+        "obstetric": "is_obstetric",
+    }
+
     def get_facilities_near(
         self, latitude: float, longitude: float, radius_km: float,
-        pediatric_only: bool = True,
+        specialty: str | None = "pediatric",
+        facility_types: list[str] | None = None,
     ) -> pd.DataFrame:
-        """指定地点から半径内の医療機関。画面で施設名を出すために使う。"""
-        condition = "AND is_pediatric" if pediatric_only else ""
-        # 距離の別名は WHERE では参照できないので、サブクエリで作ってから絞る。
-        # （QUALIFY はウィンドウ関数が必要なので使えない）
+        """指定地点から半径内の医療機関。画面で施設名を出すために使う。
+
+        specialty に科の名前を渡すとその科だけに絞る。None なら絞らない。
+        facility_types は「病院だけ」のように種別で絞りたいときに使う。
+        """
+        conditions = ""
+        if specialty is not None:
+            column = self.SPECIALTY_COLUMNS.get(specialty)
+            if column is None:
+                raise ValueError(f"未知の診療科です: {specialty}")
+            conditions += f" AND {column}"
+        params_tail: list[Any] = []
+        if facility_types:
+            placeholders = ", ".join("?" for _ in facility_types)
+            conditions += f" AND facility_type IN ({placeholders})"
+            params_tail = list(facility_types)
+
         query = f"""
             SELECT * FROM (
                 SELECT name, facility_type, address, medical_subject, beds,
                        latitude, longitude,
-                       6371.0088 * 2 * asin(sqrt(
-                           pow(sin(radians(latitude - ?) / 2), 2)
-                           + cos(radians(?)) * cos(radians(latitude))
-                             * pow(sin(radians(longitude - ?) / 2), 2)
-                       )) AS distance_km
+                       {self._DISTANCE_KM} AS distance_km
                 FROM medical_facilities
-                WHERE latitude IS NOT NULL {condition}
+                WHERE latitude IS NOT NULL {conditions}
             )
             WHERE distance_km <= ?
             ORDER BY distance_km
         """
         return self._query(
-            query, [latitude, latitude, longitude, radius_km]
+            query, [latitude, latitude, longitude, *params_tail, radius_km]
         )
+
+    def get_stations_near(
+        self, latitude: float, longitude: float, radius_km: float
+    ) -> pd.DataFrame:
+        """指定地点から半径内の駅。
+
+        同じ駅でも路線ごとにレコードが分かれているので、駅名でまとめてから
+        距離を測る（get_station_summary と同じ扱い）。乗降客数は事業者が
+        違えば別計上なので合計してよい。
+        """
+        query = f"""
+            SELECT * FROM (
+                SELECT station_name,
+                       STRING_AGG(DISTINCT operator, '・') AS operators,
+                       STRING_AGG(DISTINCT line, '・')     AS lines,
+                       SUM(passengers)                     AS passengers,
+                       MIN({self._DISTANCE_KM})            AS distance_km
+                FROM stations
+                WHERE latitude IS NOT NULL
+                GROUP BY station_name
+            )
+            WHERE distance_km <= ?
+            ORDER BY distance_km
+        """
+        return self._query(query, [latitude, latitude, longitude, radius_km])
 
     def replace_scores(self, df: pd.DataFrame) -> None:
         self._conn.execute("DELETE FROM municipality_scores")
