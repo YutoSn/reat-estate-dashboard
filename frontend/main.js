@@ -113,6 +113,7 @@ const destroyChart = (key) => {
 // ---------------------------------------------------------------- 初期化
 async function init() {
   setupTabs();
+  trackHeaderHeight();
   applyChartTheme();
   // OSのライト／ダーク切り替えに、グラフの色も追随させる
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
@@ -158,6 +159,23 @@ async function init() {
   setupTrendControls();
   setupLoanView();
   setupSiteView();
+}
+
+/**
+ * ヘッダーの高さを CSS 変数に出す。
+ * 選択中の市区町村バーはヘッダーの真下に貼り付けたいが、ヘッダーの高さは
+ * 画面幅で変わる（タブが折り返す）。固定値で書くと重なるか隙間が空く。
+ */
+function trackHeaderHeight() {
+  const header = document.querySelector('.app-header');
+  const apply = () => {
+    document.documentElement.style.setProperty(
+      '--header-height', `${Math.round(header.getBoundingClientRect().height)}px`,
+    );
+  };
+  apply();
+  if (window.ResizeObserver) new ResizeObserver(apply).observe(header);
+  else window.addEventListener('resize', apply);
 }
 
 function setupTabs() {
@@ -1029,6 +1047,13 @@ function setupDetailView() {
     state.focusCode = null;
     renderSelection();
   });
+  // 貼り付いたバーからも市区町村を足せるように、選択欄まで戻る導線を置く
+  document.getElementById('selection-add').addEventListener('click', () => {
+    document.getElementById('detail-pref').scrollIntoView({
+      behavior: 'smooth', block: 'center',
+    });
+    document.getElementById('detail-pref').focus();
+  });
 }
 
 /** 市区町村を選択リストに加えて、詳細をそこに切り替える。 */
@@ -1066,6 +1091,8 @@ function showSelectionHint(message) {
 async function renderSelection() {
   renderChips();
   document.getElementById('selection-clear').hidden = state.selectedCodes.length === 0;
+  // 選択が無いうちはバーを出さない（空の帯が貼り付いても邪魔なだけ）
+  document.getElementById('selection-bar').hidden = state.selectedCodes.length === 0;
 
   const detailBody = document.getElementById('detail-body');
   const empty = document.getElementById('detail-empty');
@@ -2178,9 +2205,70 @@ function setupSiteView() {
     loadSiteDistricts(event.target.value);
   });
 
+  // Googleマップからコピーしたものを貼れば座標が埋まる。
+  // 緯度と経度を別々に手入力させると、桁落ちや入れ違いが必ず起きるため。
+  const paste = document.getElementById('site-paste');
+  const handlePaste = () => applyPastedLocation(paste.value);
+  paste.addEventListener('input', debounce(handlePaste, 250));
+  paste.addEventListener('paste', () => setTimeout(handlePaste, 0));
+
   document.getElementById('site-save').addEventListener('click', saveSite);
   document.getElementById('site-cancel').addEventListener('click', resetSiteForm);
   loadSites();
+}
+
+/** 入力のたびに問い合わせないよう、少し待ってからまとめて投げる。 */
+function debounce(fn, wait) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), wait);
+  };
+}
+
+/**
+ * 貼り付けられた文字列を座標にして、緯度経度の欄と周辺照会に反映する。
+ * 読み取りはサーバー側（src/analysis/coordinates.py）。形が複数あるので
+ * 表記ゆれをテストで固めてある。
+ */
+async function applyPastedLocation(text) {
+  const hint = document.getElementById('site-paste-hint');
+  const trimmed = (text || '').trim();
+  if (!trimmed) {
+    hint.textContent = 'Googleマップで地図を右クリック → 出てきた座標をクリックするとコピーされます。'
+      + '地図のURLをそのまま貼っても読み取ります。';
+    hint.classList.remove('is-error', 'is-ok');
+    return;
+  }
+
+  const res = await fetch(`/api/site/parse_location?text=${encodeURIComponent(trimmed)}`);
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    // 前に入っていた座標はあえて消さない（手で入れた値を失わせないため）。
+    // ただし残っていると貼り付けが通ったと誤解されるので、明示する。
+    const stale = document.getElementById('site-lat').value
+      && document.getElementById('site-lon').value;
+    hint.textContent = (body.detail || '座標を読み取れませんでした')
+      + (stale ? '（下の緯度経度は更新していません）' : '');
+    hint.classList.add('is-error');
+    hint.classList.remove('is-ok');
+    return;
+  }
+  const found = await res.json();
+  document.getElementById('site-lat').value = found.latitude.toFixed(6);
+  document.getElementById('site-lon').value = found.longitude.toFixed(6);
+  // 「@ の座標＝地図の中心」を読んだときは、地点そのものとずれることがある。
+  // どちらを読んだかを出しておかないと、ずれていても気づけない。
+  hint.textContent = `${found.source}として読み取りました: `
+    + `${found.latitude.toFixed(6)}, ${found.longitude.toFixed(6)}`
+    + (found.source === '地図の中心' ? '（地図の中心なので、地点とずれることがあります）' : '');
+  hint.classList.add('is-ok');
+  hint.classList.remove('is-error');
+
+  if (site.map) {
+    site.map.setView([found.latitude, found.longitude], 16);
+  }
+  refreshNearbyFromForm();
 }
 
 /** 地区は取引データの地区名。座標からは決められないので選ばせる。 */
@@ -2253,12 +2341,13 @@ async function saveSite() {
 function resetSiteForm() {
   site.editingId = null;
   ['site-name', 'site-address', 'site-lat', 'site-lon', 'site-price',
-   'site-land', 'site-building', 'site-url', 'site-notes'].forEach((id) => {
+   'site-land', 'site-building', 'site-url', 'site-notes', 'site-paste'].forEach((id) => {
     document.getElementById(id).value = '';
   });
   document.getElementById('site-status').value = siteModel().default_status;
   document.getElementById('site-save').textContent = '登録する';
   document.getElementById('site-cancel').hidden = true;
+  applyPastedLocation('');
   showSiteError(null);
   renderSiteTable();
 }
@@ -2538,6 +2627,11 @@ async function ensureSiteMap() {
   map.on('click', (event) => {
     document.getElementById('site-lat').value = event.latlng.lat.toFixed(6);
     document.getElementById('site-lon').value = event.latlng.lng.toFixed(6);
+    const hint = document.getElementById('site-paste-hint');
+    hint.textContent = `地図から読み取りました: ${event.latlng.lat.toFixed(6)}, `
+      + `${event.latlng.lng.toFixed(6)}`;
+    hint.classList.add('is-ok');
+    hint.classList.remove('is-error');
     refreshNearbyFromForm();
   });
 

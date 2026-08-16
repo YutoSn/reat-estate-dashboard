@@ -25,6 +25,7 @@ from config import (
     current_year,
     stage_years,
 )
+from src.analysis.coordinates import LocationError, parse_location
 from src.analysis.geo import access_for, municipality_points
 from src.analysis.metrics import (
     CATCHMENT_SPECS,
@@ -392,6 +393,20 @@ def get_site_nearby(
         },
         "land": land,
     }
+
+
+@app.get("/api/site/parse_location")
+def parse_site_location(text: str = Query(..., description="貼り付けた位置情報")):
+    """Googleマップからコピーした文字列を緯度経度にする。
+
+    パースをサーバー側に置いているのは、コピーされてくる形が複数あって
+    表記ゆれをテストで固めておきたいため（tests/test_coordinates.py）。
+    外部への問い合わせはしない。短縮URLは展開できないので理由を返す。
+    """
+    try:
+        return parse_location(text)
+    except LocationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/sites")

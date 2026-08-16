@@ -192,8 +192,14 @@
           </label>
           <button class="btn-ghost" id="selection-clear" hidden>すべて外す</button>
         </div>
-        <div class="chip-row" id="selection-chips"></div>
         <p class="panel-note" id="selection-hint" hidden></p>
+      </div>
+
+      <!-- 選択中の市区町村。スクロールしても切り替えられるよう画面上部に貼り付く。
+           下まで読んでから別の市区町村を見たいときに、一番上まで戻らなくて済む。 -->
+      <div class="selection-bar" id="selection-bar" hidden>
+        <div class="chip-row" id="selection-chips"></div>
+        <button class="btn-ghost selection-add" id="selection-add">＋ 追加</button>
       </div>
 
       <div class="panel" id="compare-result" hidden>
@@ -476,6 +482,17 @@
           <strong>市区町村は自動判定しません</strong>。市境の物件は代表点への最近傍だと
           隣の市に寄るため、登録時に選んでいただきます。
         </p>
+        <div class="paste-box">
+          <label class="field">
+            <span>Googleマップの位置情報を貼り付け</span>
+            <input type="text" class="input" id="site-paste"
+                   placeholder="35.906296, 139.623752 / 地図のURL / 35°54'22.7&quot;N 139°37'25.5&quot;E" />
+          </label>
+          <p class="paste-hint" id="site-paste-hint">
+            Googleマップで地図を右クリック → 出てきた座標をクリックするとコピーされます。
+            地図のURLをそのまま貼っても読み取ります。
+          </p>
+        </div>
         <div class="site-form">
           <label class="field">
             <span>呼び名</span>
@@ -486,11 +503,11 @@
             <input type="text" class="input" id="site-address" />
           </label>
           <label class="field">
-            <span>緯度</span>
+            <span>緯度（貼り付けで自動入力）</span>
             <input type="number" class="input" id="site-lat" step="0.000001" placeholder="35.906296" />
           </label>
           <label class="field">
-            <span>経度</span>
+            <span>経度（貼り付けで自動入力）</span>
             <input type="number" class="input" id="site-lon" step="0.000001" placeholder="139.623752" />
           </label>
           <label class="field">

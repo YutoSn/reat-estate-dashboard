@@ -1073,3 +1073,61 @@ input[type="range"]::-moz-range-thumb {
   .site-form { grid-template-columns: 1fr 1fr; }
   #site-map { height: 340px; }
 }
+
+/* ------------------------------------------- 選択中の市区町村（貼り付き） */
+/* 下まで読んでから別の市区町村を見たいときに、一番上まで戻らずに切り替える。
+   ヘッダーの高さは画面幅で変わる（タブが折り返す）ので、JSが実測して
+   --header-height に入れている。 */
+.selection-bar {
+  position: sticky;
+  top: var(--header-height, 5.5rem);
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-bottom: 1.1rem;
+  padding: .5rem .75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+}
+.selection-bar .chip-row {
+  margin-top: 0;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.selection-bar .chip-row::-webkit-scrollbar { display: none; }
+.selection-bar .chip { flex: 0 0 auto; }
+.selection-add {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  padding: .35rem .7rem;
+}
+
+/* -------------------------------------------------- 位置情報の貼り付け */
+.paste-box {
+  margin-top: .8rem;
+  padding: .8rem .9rem;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+.paste-hint {
+  margin: .4rem 0 0;
+  font-size: .76rem;
+  line-height: 1.6;
+  color: var(--text-soft);
+}
+.paste-hint.is-ok { color: var(--accent); font-weight: 600; }
+.paste-hint.is-error { color: var(--warm); font-weight: 600; }
+
+@media (max-width: 640px) {
+  /* 画面が狭いほど「上に戻る」の負担が大きいので、バーは狭い幅でこそ効く */
+  .selection-bar { padding: .4rem .5rem; gap: .4rem; }
+  .selection-add { font-size: .78rem; padding: .3rem .5rem; }
+}
