@@ -2129,7 +2129,102 @@ async function ensureHazardMap() {
   layers['洪水浸水想定区域'].addTo(map);
   L.control.layers(null, layers, { collapsed: false }).addTo(map);
 
+  setupHazardSearch(L, map);
   setTimeout(() => map.invalidateSize(), 200);
+}
+
+/**
+ * ハザードマップを地名・座標で移動できるようにする。
+ *
+ * 全国の重ね合わせ図を指でたぐって候補地を探すのは無理があるので、
+ * 候補地点の登録と同じリゾルバ（/api/site/parse_location）に載せる。
+ * 入力の形を2か所で作り分けると片方だけ直す事故が起きるため、
+ * 読み取りはサーバー側の1本に寄せてある。
+ */
+function setupHazardSearch(L, map) {
+  const input = document.getElementById('hazard-search');
+  const hint = document.getElementById('hazard-search-hint');
+  const list = document.getElementById('hazard-search-alternatives');
+  let marker = null;
+
+  // 想定区域は縮尺を上げないと塗りが出ないので、移動先では寄せる。
+  const HAZARD_ZOOM = 16;
+
+  const moveTo = (latitude, longitude, label) => {
+    map.setView([latitude, longitude], HAZARD_ZOOM);
+    if (marker) marker.remove();
+    // 塗りを隠さないよう、塗りつぶさない丸で示す。
+    marker = L.circleMarker([latitude, longitude], {
+      radius: 9,
+      weight: 3,
+      color: cssVar('--site-marker'),
+      fillOpacity: 0,
+    }).addTo(map);
+    marker.bindPopup(label).openPopup();
+  };
+
+  const run = async () => {
+    const text = (input.value || '').trim();
+    list.hidden = true;
+    list.innerHTML = '';
+    if (!text) {
+      hint.textContent = '駅名・市区町村名、Plus Code、座標、Googleマップの共有リンクで移動できます。'
+        + '登録済みの候補地点は下の一覧から選べます。';
+      hint.classList.remove('is-error', 'is-ok');
+      return;
+    }
+
+    const res = await fetch(`/api/site/parse_location?text=${encodeURIComponent(text)}`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      hint.textContent = body.detail || '位置を読み取れませんでした';
+      hint.classList.add('is-error');
+      hint.classList.remove('is-ok');
+      return;
+    }
+
+    const found = await res.json();
+    moveTo(found.latitude, found.longitude, found.source);
+    const notes = [found.detail, found.warning].filter(Boolean);
+    hint.textContent = `${found.source}: `
+      + `${found.latitude.toFixed(6)}, ${found.longitude.toFixed(6)}`
+      + (notes.length ? `（${notes.join('／')}）` : '');
+    hint.classList.toggle('is-error', Boolean(found.warning));
+    hint.classList.toggle('is-ok', !found.warning);
+
+    (found.alternatives || []).forEach((entry) => {
+      const button = el('button', 'link-button', entry.label);
+      button.type = 'button';
+      button.addEventListener('click', () => moveTo(entry.latitude, entry.longitude, entry.label));
+      const item = el('li');
+      item.appendChild(button);
+      list.appendChild(item);
+      list.hidden = false;
+    });
+  };
+
+  input.addEventListener('input', debounce(run, 350));
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      run();
+    }
+  });
+
+  loadHazardSiteChips(moveTo);
+}
+
+/** 登録済みの候補地点をボタンで出す。ハザード確認は登録後にやることが多いため。 */
+async function loadHazardSiteChips(moveTo) {
+  const row = document.getElementById('hazard-sites');
+  row.innerHTML = '';
+  const { sites } = await api('/api/sites').catch(() => ({ sites: [] }));
+  (sites || []).forEach((entry) => {
+    const button = el('button', 'chip', entry.name);
+    button.type = 'button';
+    button.addEventListener('click', () => moveTo(entry.latitude, entry.longitude, entry.name));
+    row.appendChild(button);
+  });
 }
 
 init().catch((error) => {
@@ -2231,12 +2326,18 @@ function debounce(fn, wait) {
  * 読み取りはサーバー側（src/analysis/coordinates.py）。形が複数あるので
  * 表記ゆれをテストで固めてある。
  */
+const PASTE_HELP = 'スマホのGoogleマップなら、地点の詳細に出る Plus Code'
+  + '（例: WJ4F+GG さいたま市大宮区）が確実です。'
+  + '駅名・市区町村名、共有リンク、座標も読み取ります。';
+
 async function applyPastedLocation(text) {
   const hint = document.getElementById('site-paste-hint');
+  const list = document.getElementById('site-paste-alternatives');
   const trimmed = (text || '').trim();
+  list.hidden = true;
+  list.innerHTML = '';
   if (!trimmed) {
-    hint.textContent = 'Googleマップで地図を右クリック → 出てきた座標をクリックするとコピーされます。'
-      + '地図のURLをそのまま貼っても読み取ります。';
+    hint.textContent = PASTE_HELP;
     hint.classList.remove('is-error', 'is-ok');
     return;
   }
@@ -2248,23 +2349,51 @@ async function applyPastedLocation(text) {
     // ただし残っていると貼り付けが通ったと誤解されるので、明示する。
     const stale = document.getElementById('site-lat').value
       && document.getElementById('site-lon').value;
-    hint.textContent = (body.detail || '座標を読み取れませんでした')
+    hint.textContent = (body.detail || '位置を読み取れませんでした')
       + (stale ? '（下の緯度経度は更新していません）' : '');
     hint.classList.add('is-error');
     hint.classList.remove('is-ok');
     return;
   }
   const found = await res.json();
-  document.getElementById('site-lat').value = found.latitude.toFixed(6);
-  document.getElementById('site-lon').value = found.longitude.toFixed(6);
-  // 「@ の座標＝地図の中心」を読んだときは、地点そのものとずれることがある。
-  // どちらを読んだかを出しておかないと、ずれていても気づけない。
+  applyResolvedLocation(found);
+
+  // 何をどう読んだかを必ず出す。「地図の中心」や「市区町村の代表点」は
+  // 目的の地点から離れることがあり、黙って入れると気づけないため。
+  const notes = [found.detail, found.warning].filter(Boolean);
+  if (found.source === '地図の中心') {
+    notes.push('地図の中心なので、地点とずれることがあります');
+  }
   hint.textContent = `${found.source}として読み取りました: `
     + `${found.latitude.toFixed(6)}, ${found.longitude.toFixed(6)}`
-    + (found.source === '地図の中心' ? '（地図の中心なので、地点とずれることがあります）' : '');
-  hint.classList.add('is-ok');
-  hint.classList.remove('is-error');
+    + (notes.length ? `（${notes.join('／')}）` : '');
+  hint.classList.toggle('is-error', Boolean(found.warning));
+  hint.classList.toggle('is-ok', !found.warning);
 
+  // 同名の駅・地名があるので、違うものが選ばれたときに直せるようにする。
+  if (found.alternatives && found.alternatives.length) {
+    found.alternatives.forEach((entry) => {
+      const button = el('button', 'link-button', entry.label);
+      button.type = 'button';
+      button.addEventListener('click', () => {
+        applyResolvedLocation(entry);
+        hint.textContent = `${entry.label}: `
+          + `${entry.latitude.toFixed(6)}, ${entry.longitude.toFixed(6)}`;
+        hint.classList.add('is-ok');
+        hint.classList.remove('is-error');
+      });
+      const item = el('li');
+      item.appendChild(button);
+      list.appendChild(item);
+    });
+    list.hidden = false;
+  }
+}
+
+/** 解決した座標を欄・地図・周辺照会に流す。候補の選び直しでも同じ経路を通す。 */
+function applyResolvedLocation(found) {
+  document.getElementById('site-lat').value = found.latitude.toFixed(6);
+  document.getElementById('site-lon').value = found.longitude.toFixed(6);
   if (site.map) {
     site.map.setView([found.latitude, found.longitude], 16);
   }

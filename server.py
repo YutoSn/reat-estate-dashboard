@@ -25,7 +25,7 @@ from config import (
     current_year,
     stage_years,
 )
-from src.analysis.coordinates import LocationError, parse_location
+from src.analysis.coordinates import LocationError, parse_location, search_places
 from src.analysis.geo import access_for, municipality_points
 from src.analysis.metrics import (
     CATCHMENT_SPECS,
@@ -397,16 +397,32 @@ def get_site_nearby(
 
 @app.get("/api/site/parse_location")
 def parse_site_location(text: str = Query(..., description="貼り付けた位置情報")):
-    """Googleマップからコピーした文字列を緯度経度にする。
+    """貼り付けられた位置情報を緯度経度にする。
 
     パースをサーバー側に置いているのは、コピーされてくる形が複数あって
     表記ゆれをテストで固めておきたいため（tests/test_coordinates.py）。
-    外部への問い合わせはしない。短縮URLは展開できないので理由を返す。
+
+    Plus Code・座標・地名は手元のデータだけで解ける。唯一 Googleへ出るのは
+    スマホの共有リンク（maps.app.goo.gl）を展開するときで、これは中に座標が
+    入っておらず、解かないと「リンクを貼っても座標が出ない」ことになるため。
+    展開できなければ Plus Code を案内して終わる。
     """
     try:
         return parse_location(text)
     except LocationError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/places")
+def search_place_names(
+    q: str = Query(..., description="地名・駅名"),
+    limit: int = Query(8, ge=1, le=20),
+):
+    """地名の候補を返す。検索欄の入力補助用。
+
+    座標は返すが、市区町村は代表点なので kind で区別できるようにしてある。
+    """
+    return {"places": search_places(q, limit=limit)}
 
 
 @app.get("/api/sites")

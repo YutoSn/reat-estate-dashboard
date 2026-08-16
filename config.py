@@ -33,6 +33,10 @@ DUCKDB_FILE = "land_price.duckdb"
 # 市区町村の代表点（緯度経度）。scripts/build_municipality_geo.py で生成する。
 MUNICIPALITY_GEO_FILE = "data/municipality_geo.csv"
 
+# 駅の位置・路線。scripts/build_station_index.py で生成する。
+# 利便性スコアの材料であると同時に、地名検索の索引にも使う。
+STATIONS_FILE = "data/stations.csv"
+
 # --- 候補地点 --------------------------------------------------------------
 # 検討中の物件を貯めるファイル。DuckDB ではなく JSON にしている。
 #

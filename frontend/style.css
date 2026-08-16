@@ -1126,6 +1126,17 @@ input[type="range"]::-moz-range-thumb {
 .paste-hint.is-ok { color: var(--accent); font-weight: 600; }
 .paste-hint.is-error { color: var(--warm); font-weight: 600; }
 
+/* 同名の駅・地名の言い直し。読み取り結果のすぐ下に置いて選び直せるようにする */
+.paste-alternatives {
+  list-style: none;
+  margin: .4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: .2rem .8rem;
+  font-size: .76rem;
+}
+
 @media (max-width: 640px) {
   /* 画面が狭いほど「上に戻る」の負担が大きいので、バーは狭い幅でこそ効く */
   .selection-bar { padding: .4rem .5rem; gap: .4rem; }

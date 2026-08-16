@@ -484,14 +484,16 @@
         </p>
         <div class="paste-box">
           <label class="field">
-            <span>Googleマップの位置情報を貼り付け</span>
+            <span>位置を貼り付け / 地名で検索</span>
             <input type="text" class="input" id="site-paste"
-                   placeholder="35.906296, 139.623752 / 地図のURL / 35°54'22.7&quot;N 139°37'25.5&quot;E" />
+                   placeholder="WJ4F+GG さいたま市大宮区 / 大宮駅 / 35.906296, 139.623752" />
           </label>
           <p class="paste-hint" id="site-paste-hint">
-            Googleマップで地図を右クリック → 出てきた座標をクリックするとコピーされます。
-            地図のURLをそのまま貼っても読み取ります。
+            スマホのGoogleマップなら、地点の詳細に出る
+            <strong>Plus Code</strong>（例: WJ4F+GG さいたま市大宮区）が確実です。
+            駅名・市区町村名、共有リンク、座標も読み取ります。
           </p>
+          <ul class="paste-alternatives" id="site-paste-alternatives" hidden></ul>
         </div>
         <div class="site-form">
           <label class="field">
@@ -621,6 +623,19 @@
           家を建てる土地は、統計だけでは決められません。洪水・土砂・津波の想定区域と
           地形分類を重ねて、候補地そのものを確認してください。
         </p>
+        <div class="paste-box">
+          <label class="field">
+            <span>場所を探す</span>
+            <input type="text" class="input" id="hazard-search"
+                   placeholder="大宮駅 / WJ4F+GG さいたま市大宮区 / 35.906296, 139.623752" />
+          </label>
+          <p class="paste-hint" id="hazard-search-hint">
+            駅名・市区町村名、Plus Code、座標、Googleマップの共有リンクで移動できます。
+            登録済みの候補地点は下の一覧から選べます。
+          </p>
+          <ul class="paste-alternatives" id="hazard-search-alternatives" hidden></ul>
+          <div class="chip-row" id="hazard-sites"></div>
+        </div>
       </div>
       <div class="map-wrap">
         <div id="map"></div>
