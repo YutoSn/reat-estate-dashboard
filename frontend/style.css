@@ -1126,6 +1126,17 @@ input[type="range"]::-moz-range-thumb {
 .paste-hint.is-ok { color: var(--accent); font-weight: 600; }
 .paste-hint.is-error { color: var(--warm); font-weight: 600; }
 
+/* 地図に置くピン。色はここで決めて、JS には持たせない。
+   Leaflet の既定アイコン（画像ファイル）はバンドル後に404になるので使わない */
+.site-pin {
+  color: var(--site-marker);
+  /* 掴んでいるあいだ指の下で見失わないよう、影を付けて地図から浮かせる */
+  filter: drop-shadow(0 2px 3px rgb(0 0 0 / .45));
+  cursor: grab;
+}
+.site-pin:active { cursor: grabbing; }
+.leaflet-marker-draggable.site-pin { touch-action: none; }
+
 /* 同名の駅・地名の言い直し。読み取り結果のすぐ下に置いて選び直せるようにする */
 .paste-alternatives {
   list-style: none;

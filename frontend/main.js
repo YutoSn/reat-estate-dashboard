@@ -2150,8 +2150,7 @@ function setupHazardSearch(L, map) {
   // 想定区域は縮尺を上げないと塗りが出ないので、移動先では寄せる。
   const HAZARD_ZOOM = 16;
 
-  const moveTo = (latitude, longitude, label) => {
-    map.setView([latitude, longitude], HAZARD_ZOOM);
+  const showPoint = (latitude, longitude, label) => {
     if (marker) marker.remove();
     // 塗りを隠さないよう、塗りつぶさない丸で示す。
     marker = L.circleMarker([latitude, longitude], {
@@ -2162,6 +2161,29 @@ function setupHazardSearch(L, map) {
     }).addTo(map);
     marker.bindPopup(label).openPopup();
   };
+
+  const moveTo = (latitude, longitude, label) => {
+    map.setView([latitude, longitude], HAZARD_ZOOM);
+    showPoint(latitude, longitude, label);
+  };
+
+  // 地図をタップした場所の市区町村を出す。想定区域の塗りを見ながら
+  // 「ここはどの市か」を確かめられるようにするため。
+  map.on('click', async (event) => {
+    const { lat, lng } = event.latlng;
+    showPoint(lat, lng, `${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+    const res = await fetch(
+      `/api/site/parse_location?text=${encodeURIComponent(`${lat},${lng}`)}`,
+    );
+    if (!res.ok) return;
+    const found = await res.json();
+    const where = found.municipality_code ? cityName(found.municipality_code) : '';
+    showPoint(lat, lng, `${where || '市区町村不明'}<br>${lat.toFixed(6)}, ${lng.toFixed(6)}`);
+    hint.textContent = `地図の位置: ${lat.toFixed(6)}, ${lng.toFixed(6)}`
+      + (where ? `（${where}）` : '');
+    hint.classList.add('is-ok');
+    hint.classList.remove('is-error');
+  });
 
   const run = async () => {
     const text = (input.value || '').trim();
@@ -2326,9 +2348,9 @@ function debounce(fn, wait) {
  * 読み取りはサーバー側（src/analysis/coordinates.py）。形が複数あるので
  * 表記ゆれをテストで固めてある。
  */
-const PASTE_HELP = 'スマホのGoogleマップなら、地点の詳細に出る Plus Code'
-  + '（例: WJ4F+GG さいたま市大宮区）が確実です。'
-  + '駅名・市区町村名、共有リンク、座標も読み取ります。';
+const PASTE_HELP = '下の地図をタップするとピンが立ち、ドラッグで微調整できます。'
+  + '駅名・市区町村名、Plus Code（例: WJ4F+GG さいたま市大宮区）、'
+  + '共有リンク、座標でも探せます。市区町村は位置から自動で入ります。';
 
 async function applyPastedLocation(text) {
   const hint = document.getElementById('site-paste-hint');
@@ -2364,6 +2386,10 @@ async function applyPastedLocation(text) {
   if (found.source === '地図の中心') {
     notes.push('地図の中心なので、地点とずれることがあります');
   }
+  if (!found.municipality_code) {
+    // プルダウンが空になった理由を出す。空欄だけだと入れ忘れに見える。
+    notes.push('対象8都県の外のため、市区町村を判定できませんでした');
+  }
   hint.textContent = `${found.source}として読み取りました: `
     + `${found.latitude.toFixed(6)}, ${found.longitude.toFixed(6)}`
     + (notes.length ? `（${notes.join('／')}）` : '');
@@ -2396,8 +2422,111 @@ function applyResolvedLocation(found) {
   document.getElementById('site-lon').value = found.longitude.toFixed(6);
   if (site.map) {
     site.map.setView([found.latitude, found.longitude], 16);
+    placeSitePin(found.latitude, found.longitude);
+  }
+  applySiteMunicipality(found.municipality_code);
+  refreshNearbyFromForm();
+}
+
+/**
+ * つまんで動かせるピンを置く。
+ *
+ * 地図をタップして置いたあと、指1本で微調整できるほうが、
+ * 座標を打ち直すより早い。ドラッグ中は問い合わせず、離したときだけ確定する
+ * （動かしている最中に毎回逆引きすると、無駄な往復が何十回も出る）。
+ */
+function placeSitePin(latitude, longitude) {
+  const L = site.leaflet;
+  if (!L || !site.map) return;
+  if (site.pin) {
+    site.pin.setLatLng([latitude, longitude]);
+    return;
+  }
+  // Leaflet の既定アイコンは画像ファイルを相対パスで読むため、バンドル後は
+  // 404 になって「壊れた画像」が出る。色も CSS 変数から取りたいので、
+  // currentColor で塗る SVG を divIcon として持つ。
+  const icon = L.divIcon({
+    className: 'site-pin',
+    html: '<svg viewBox="0 0 24 32" width="26" height="34" aria-hidden="true">'
+      + '<path d="M12 0C5.4 0 0 5.4 0 12c0 8.4 12 20 12 20s12-11.6 12-20'
+      + 'c0-6.6-5.4-12-12-12z" fill="currentColor"/>'
+      + '<circle cx="12" cy="12" r="4.5" fill="#fff"/></svg>',
+    iconSize: [26, 34],
+    // 先端が指す点。中心にすると、置いた場所と保存される座標が17pxずれる。
+    iconAnchor: [13, 34],
+  });
+  site.pin = L.marker([latitude, longitude], {
+    draggable: true,
+    autoPan: true,
+    icon,
+    title: 'ドラッグで位置を調整できます',
+  }).addTo(site.map);
+  site.pin.on('dragend', () => {
+    const { lat, lng } = site.pin.getLatLng();
+    moveSitePin(lat, lng, { keepView: true });
+  });
+}
+
+/**
+ * ピンの位置を確定して、座標・市区町村・周辺照会をまとめて更新する。
+ *
+ * 逆引きはサーバーの同じ入口（/api/site/parse_location）に通す。
+ * 地図用に別の経路を作ると、片方だけ直す事故が起きるため。
+ */
+async function moveSitePin(latitude, longitude, { keepView = false } = {}) {
+  const hint = document.getElementById('site-paste-hint');
+  document.getElementById('site-lat').value = latitude.toFixed(6);
+  document.getElementById('site-lon').value = longitude.toFixed(6);
+  placeSitePin(latitude, longitude);
+  if (!keepView && site.map) site.map.panTo([latitude, longitude]);
+
+  hint.classList.remove('is-error');
+  hint.classList.add('is-ok');
+  hint.textContent = `地図の位置: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+
+  const res = await fetch(
+    `/api/site/parse_location?text=${encodeURIComponent(`${latitude},${longitude}`)}`,
+  );
+  if (res.ok) {
+    const found = await res.json();
+    applySiteMunicipality(found.municipality_code);
+    const where = found.municipality_code ? cityName(found.municipality_code) : '';
+    hint.textContent = `地図の位置: ${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
+      + (where ? `（${where}）` : '（市区町村を判定できませんでした。下で選んでください）');
   }
   refreshNearbyFromForm();
+}
+
+/**
+ * 座標から決まった市区町村をプルダウンに入れる。
+ *
+ * 場所が決まればその市区町村も決まっているので、人に選び直させない。
+ *
+ * 判定できなかったときは**前の値を消す**。触らずに残すと、さっきの地点の
+ * 市区町村が入ったままになり、それが保存される。空欄なら選び直す必要に
+ * 気づけるが、埋まっていると気づけない。
+ */
+async function applySiteMunicipality(code) {
+  const prefSelect = document.getElementById('site-pref');
+  const citySelect = document.getElementById('site-city');
+  const districtSelect = document.getElementById('site-district');
+
+  if (!code) {
+    prefSelect.value = '';
+    citySelect.innerHTML = '<option value="">選択してください</option>';
+    districtSelect.innerHTML = '<option value="">指定しない</option>';
+    return;
+  }
+  if (citySelect.value === code) return;
+
+  const prefCode = code.slice(0, 2);
+  if (prefSelect.value !== prefCode) {
+    prefSelect.value = prefCode;
+    await loadCities(prefCode, 'site-city');
+  }
+  citySelect.value = code;
+  // 地区は座標からは決められない（取引データに座標が無い）。一覧だけ入れ替える。
+  await loadSiteDistricts(code);
 }
 
 /** 地区は取引データの地区名。座標からは決められないので選ばせる。 */
@@ -2476,6 +2605,12 @@ function resetSiteForm() {
   document.getElementById('site-status').value = siteModel().default_status;
   document.getElementById('site-save').textContent = '登録する';
   document.getElementById('site-cancel').hidden = true;
+  // ピンも消す。座標を空にしたのに前の地点が残っていると、次の登録で
+  // 「置いたつもりの場所」と保存される座標がずれる。
+  if (site.pin) {
+    site.pin.remove();
+    site.pin = null;
+  }
   applyPastedLocation('');
   showSiteError(null);
   renderSiteTable();
@@ -2752,17 +2887,9 @@ async function ensureSiteMap() {
 
   site.markers = L.layerGroup().addTo(map);
 
-  // 地図クリックで座標を取れるようにする。ジオコーディングAPIに依存しないため。
-  map.on('click', (event) => {
-    document.getElementById('site-lat').value = event.latlng.lat.toFixed(6);
-    document.getElementById('site-lon').value = event.latlng.lng.toFixed(6);
-    const hint = document.getElementById('site-paste-hint');
-    hint.textContent = `地図から読み取りました: ${event.latlng.lat.toFixed(6)}, `
-      + `${event.latlng.lng.toFixed(6)}`;
-    hint.classList.add('is-ok');
-    hint.classList.remove('is-error');
-    refreshNearbyFromForm();
-  });
+  // 地図を触って位置を決められるようにする。座標を打つのも貼るのも要らない。
+  // タップで置いて、ドラッグで詰める。スマホではこれが一番早い。
+  map.on('click', (event) => moveSitePin(event.latlng.lat, event.latlng.lng));
 
   renderSiteMarkers();
   setTimeout(() => map.invalidateSize(), 200);

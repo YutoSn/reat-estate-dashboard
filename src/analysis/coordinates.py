@@ -40,6 +40,7 @@ import re
 
 from src.analysis.place_index import PlaceIndex, PlaceNotFound, describe
 from src.analysis.plus_code import PlusCodeError, decode, is_full, is_short, recover_nearest
+from src.analysis.reverse_geocode import municipality_for
 
 # 短縮URL。中に座標が無いので、展開しないと読めない。
 SHORT_LINK = re.compile(r"https?://(?:maps\.app\.goo\.gl|goo\.gl/maps)/\S+", re.I)
@@ -100,6 +101,12 @@ def _parse_dms(text: str) -> tuple[float, float] | None:
 
 def _result(latitude: float, longitude: float, source: str, **extra) -> dict:
     result = {"latitude": latitude, "longitude": longitude, "source": source}
+    # 場所が決まればその市区町村も決まっている。人に選び直させない。
+    # 決められないときは入れない（間違った市区町村が静かに保存されるより、
+    # プルダウンが空のままのほうがよい）。
+    found = municipality_for(latitude, longitude)
+    if found:
+        result["municipality_code"] = found["municipality_code"]
     # 日本の外に出たら、緯度経度が逆に貼られた可能性を添える。黙って通すと
     # 周辺照会が0件になるだけで、原因が分からない。
     if not (
@@ -197,6 +204,8 @@ def _parse_place_name(raw: str) -> dict | None:
             "label": describe(entry),
             "latitude": entry["latitude"],
             "longitude": entry["longitude"],
+            # 候補を選び直したときも市区町村が追随するように持たせる。
+            "municipality_code": entry["municipality_code"],
         }
         for entry in candidates[1:]
     ]

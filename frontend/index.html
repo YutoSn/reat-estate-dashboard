@@ -489,9 +489,9 @@
                    placeholder="WJ4F+GG さいたま市大宮区 / 大宮駅 / 35.906296, 139.623752" />
           </label>
           <p class="paste-hint" id="site-paste-hint">
-            スマホのGoogleマップなら、地点の詳細に出る
-            <strong>Plus Code</strong>（例: WJ4F+GG さいたま市大宮区）が確実です。
-            駅名・市区町村名、共有リンク、座標も読み取ります。
+            <strong>下の地図をタップするとピンが立ち、ドラッグで微調整できます。</strong>
+            駅名・市区町村名、Plus Code（例: WJ4F+GG さいたま市大宮区）、
+            共有リンク、座標でも探せます。市区町村は位置から自動で入ります。
           </p>
           <ul class="paste-alternatives" id="site-paste-alternatives" hidden></ul>
         </div>
@@ -568,9 +568,10 @@
       <div class="panel">
         <div class="panel-head">
           <h2>地図</h2>
-          <span class="panel-hint">クリックすると座標が入力欄に入ります</span>
+          <span class="panel-hint">タップでピンを置き、ドラッグで微調整</span>
         </div>
         <p class="panel-note">
+          ピンを動かすと座標と<strong>市区町村が自動で入り</strong>、周辺の照会もやり直します。
           ハザードのレイヤーと重ねられます。候補地点は登録すると地図に出ます。
         </p>
         <div class="map-wrap">
@@ -631,7 +632,8 @@
           </label>
           <p class="paste-hint" id="hazard-search-hint">
             駅名・市区町村名、Plus Code、座標、Googleマップの共有リンクで移動できます。
-            登録済みの候補地点は下の一覧から選べます。
+            地図をタップすると、その地点の市区町村が出ます。
+            登録済みの候補地点は下のボタンから選べます。
           </p>
           <ul class="paste-alternatives" id="hazard-search-alternatives" hidden></ul>
           <div class="chip-row" id="hazard-sites"></div>
